@@ -1,0 +1,34 @@
+{
+  "name": "web-terminal",
+  "version": "0.1.0",
+  "description": "A better browser terminal: real shells behind one password, with tabs and a key bar for phones.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "vite build client",
+    "check": "tsc -p . && tsc -p client",
+    "test": "node --test server/test/",
+    "passwd": "node server/passwd.ts",
+    "start": "node server/main.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.5",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/xterm": "6.0.0",
+    "hono": "4.13.13",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

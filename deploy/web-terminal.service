@@ -1,0 +1,17 @@
+[Unit]
+Description=Web terminal (127.0.0.1 only; put a TLS reverse proxy in front)
+After=network.target
+
+[Service]
+Type=simple
+# Clone the repo to ~/web-terminal, or change this path.
+WorkingDirectory=%h/web-terminal
+# Use the absolute path of your Node 24+ binary; systemd's PATH is minimal.
+ExecStart=/usr/bin/node server/main.ts
+Environment=WEB_TERMINAL_PORT=3120
+Restart=always
+RestartSec=2
+UMask=0077
+
+[Install]
+WantedBy=default.target

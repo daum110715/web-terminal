@@ -1,0 +1,314 @@
+/* Colors and type follow the console (apps/web/src/styles.css): one cream page
+   under a faint amber-to-orange wash, ink and dim text, the wordmark's face for
+   primary actions, shade lines instead of fills. Flat: no shadows, no dark or
+   gray surfaces. */
+:root {
+  --cream: #fcfaf6;
+  --ink: #44403c;
+  --dim: #78716c;
+  --amber: #f59e0b;
+  --orange: #fb923c;
+  --amber-soft: rgb(245 158 11 / 0.12);
+  --face-from: color-mix(in srgb, #f59e0b 55%, white);
+  --face-to: color-mix(in srgb, #fb923c 55%, white);
+  --shade: color-mix(in srgb, color-mix(in srgb, #f59e0b 50%, #fb923c) 36%, #fcfaf6);
+  --shade-soft: color-mix(in srgb, color-mix(in srgb, #f59e0b 50%, #fb923c) 14%, #fcfaf6);
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: linear-gradient(135deg, rgb(245 158 11 / 0.05), rgb(251 146 60 / 0.05)) fixed, var(--cream);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ------------------------------------------------------------ sign in */
+
+.center {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.login {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 14px;
+  border-top: 2px solid var(--shade);
+  padding-top: 20px;
+}
+
+.login h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.login label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.login input {
+  border: 1px solid var(--shade);
+  border-radius: 4px;
+  background: transparent;
+  padding: 9px 10px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.notice {
+  margin: 0;
+  min-height: 1.5em;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.primary {
+  justify-self: start;
+  border: 0;
+  border-radius: 4px;
+  padding: 9px 18px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(90deg, var(--face-from), var(--face-to));
+}
+
+/* ------------------------------------------------------------ console */
+
+.shell {
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--shade-soft);
+}
+
+.brand {
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--face-from), var(--face-to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-right: 6px;
+}
+
+.who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.ghost {
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.ghost:hover {
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 12px;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.tab:hover {
+  background: var(--amber-soft);
+}
+
+.tab.on {
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.tab-label {
+  border: 0;
+  background: transparent;
+  padding: 6px 4px 6px 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tab-close,
+.tab-new {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 4px;
+}
+
+.tab-close:hover,
+.tab-new:hover {
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  margin: 0 12px;
+}
+
+.term {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border-top: 1px solid var(--shade);
+  overflow: hidden;
+}
+
+.empty {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  justify-items: center;
+  color: var(--dim);
+  border-top: 1px solid var(--shade);
+}
+
+.empty p {
+  margin: 0;
+}
+
+.keys {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  scrollbar-width: none;
+}
+
+.keys::-webkit-scrollbar {
+  display: none;
+}
+
+.key {
+  flex: none;
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--shade);
+  border-radius: 4px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.key:active {
+  background: var(--amber-soft);
+}
+
+.key.on {
+  background: linear-gradient(90deg, var(--face-from), var(--face-to));
+  color: #fff;
+  border-color: transparent;
+}
+
+.footer {
+  padding: 0 12px 8px;
+  min-height: 1.5em;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.footer .status {
+  display: block;
+}
+
+/* Phones: the bar stays compact and the terminal gets the rest of the screen. */
+@media (max-width: 600px) {
+  .who {
+    display: none;
+  }
+  .stage {
+    margin: 0 6px;
+  }
+  .keys {
+    padding: 6px;
+  }
+}

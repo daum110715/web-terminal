@@ -1,0 +1,8 @@
+# Caddy terminates TLS and appends the client address to X-Forwarded-For,
+# which the login rate limit relies on. Replace the host name with your own.
+terminal.example.com {
+  header X-Robots-Tag "noindex, nofollow"
+  reverse_proxy 127.0.0.1:3120 {
+    flush_interval -1
+  }
+}
