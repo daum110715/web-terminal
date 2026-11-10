@@ -180,6 +180,7 @@ textarea {
   display: flex;
   align-items: stretch;
   overflow-x: auto;
+  touch-action: pan-x pinch-zoom;
   scrollbar-width: none;
 }
 
@@ -339,6 +340,12 @@ textarea {
   overflow: hidden;
 }
 
+.term .xterm {
+  /* The virtual viewport pans in TouchScroll while two fingers can still zoom. */
+  touch-action: pinch-zoom;
+  overscroll-behavior: contain;
+}
+
 .empty {
   height: 100%;
   display: grid;
@@ -353,6 +360,7 @@ textarea {
   display: flex;
   gap: 6px;
   overflow-x: auto;
+  touch-action: pan-x pinch-zoom;
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   scrollbar-width: none;
@@ -405,6 +413,7 @@ textarea {
   width: min(380px, 100vw);
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y pinch-zoom;
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--bg);
   border-left: 1px solid var(--line);

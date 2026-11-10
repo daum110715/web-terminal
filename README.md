@@ -32,8 +32,10 @@ It is a single small Node server, a plain TypeScript client on
 - **Keys.** Ctrl+V pastes; Ctrl+C copies when text is selected and interrupts
   otherwise; Shift+Enter sends a line break to programs that take one; programs
   can copy to the clipboard with OSC 52 (never read it).
-- **Phones.** A key bar with Esc, Tab, Ctrl, Alt, arrows and Paste, a layout
-  that stays above the on-screen keyboard, and it installs as an app.
+- **Phones.** Swipe through shell history and full-screen programs, with
+  momentum after lifting your finger. A key bar with Esc, Tab, Ctrl, Alt,
+  arrows and Paste, a layout that stays above the on-screen keyboard, and it
+  installs as an app.
 
 ## Requirements
 

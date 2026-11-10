@@ -9,6 +9,7 @@ import { Terminal } from "@xterm/xterm";
 import { h } from "./dom.ts";
 import { activeTheme, contrastRatio, fontFamily, primaryFont, settings } from "./settings.ts";
 import { toXterm } from "./themes.ts";
+import { TouchScroll } from "./touch-scroll.ts";
 
 export type ShellStatus = "connecting" | "connected" | "reconnecting";
 
@@ -86,6 +87,7 @@ export class Shell {
   private readonly host: ShellHost;
   private readonly fit = new FitAddon();
   private readonly observer: ResizeObserver;
+  private readonly touchScroll: TouchScroll;
   private webgl: WebglAddon | null = null;
   private socket: WebSocket | null = null;
   private attempts = 0;
@@ -134,6 +136,7 @@ export class Shell {
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     term.open(this.mount);
+    this.touchScroll = new TouchScroll(term);
     this.startWebgl();
 
     term.onData((data) => this.send(this.host.transform(data)));
@@ -241,6 +244,7 @@ export class Shell {
   }
 
   hide() {
+    this.touchScroll.stop();
     this.visible = false;
     this.mount.hidden = true;
   }
@@ -353,6 +357,7 @@ export class Shell {
     shells.delete(this);
     window.clearTimeout(this.timer);
     this.observer.disconnect();
+    this.touchScroll.dispose();
     this.socket?.close(1000);
     this.socket = null;
     this.term.dispose();
