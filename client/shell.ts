@@ -137,6 +137,11 @@ export class Shell {
     this.startWebgl();
 
     term.onData((data) => this.send(this.host.transform(data)));
+    // Legacy mouse reports contain bytes that must not be encoded as UTF-8.
+    term.onBinary((data) => {
+      if (this.socket?.readyState === WebSocket.OPEN)
+        this.socket.send(Uint8Array.from(data, (char) => char.charCodeAt(0)));
+    });
     term.attachCustomKeyEventHandler((event) => this.handleKey(event));
     this.answerSchemeQueries();
 

@@ -15,7 +15,11 @@ class Viewer extends EventEmitter {
     this.readyState = 3;
     this.emit("close");
   }
-  type(text: string) {
+  ping() {}
+  terminate() {
+    this.close();
+  }
+  type(text: string | Buffer) {
     this.emit("message", Buffer.from(text), true);
   }
   get output() {
@@ -33,7 +37,7 @@ const until = async (ready: () => boolean) => {
   assert.ok(ready(), "timed out");
 };
 
-test("a late viewer gets the screen and the modes a full-screen program set", async () => {
+test("a late viewer restores full-screen mouse modes and sends legacy mouse bytes intact", async () => {
   process.env.SHELL = "/bin/sh";
   const terminals = new Terminals(2);
   try {
@@ -42,8 +46,8 @@ test("a late viewer gets the screen and the modes a full-screen program set", as
     terminals.attach(id, first as unknown as WebSocket);
     await until(() => first.frames.length > 0);
     assert.equal(first.snapshot.type, "snapshot");
-    // Alternate screen, mouse reporting and bracketed paste, as tmux or vim would set them.
-    first.type("printf '\\033[?1049h\\033[?1000h\\033[?2004hMARK'\n");
+    // Alternate screen, mouse reporting in SGR format, a hidden cursor and bracketed paste, as tmux or vim would set them.
+    first.type("printf '\\033[?1049h\\033[?1000h\\033[?1006h\\033[?25l\\033[?2004hMARK'\n");
     await until(() => first.output.includes("\x1b[?2004hMARK"));
 
     const second = new Viewer();
@@ -55,6 +59,15 @@ test("a late viewer gets the screen and the modes a full-screen program set", as
     assert.match(data, /\x1b\[\?1049h/);
     assert.match(data, /\x1b\[\?1000h/);
     assert.match(data, /\x1b\[\?2004h/);
+    assert.match(data, /\x1b\[\?1006h/);
+    assert.match(data, /\x1b\[\?25l/);
+
+    // A legacy mouse coordinate above 95 contains a byte above 0x7f.
+    // Decoding it as UTF-8 would insert replacement bytes before it reaches the TUI.
+    first.type("python3 -c 'import os,termios,tty; old=termios.tcgetattr(0); tty.setraw(0); print(\"MOUSE_READY\", flush=True); data=os.read(0,6); termios.tcsetattr(0,termios.TCSANOW,old); print(\"MOUSE_BYTES=\"+data.hex(), flush=True)'\n");
+    await until(() => first.output.includes("\nMOUSE_READY\n"));
+    first.type(Buffer.from([0x1b, 0x5b, 0x4d, 0x20, 0xc8, 0x64]));
+    await until(() => first.output.includes("MOUSE_BYTES=1b5b4d20c864"));
   } finally {
     terminals.close();
   }
