@@ -2,3 +2,4 @@ node_modules/
 client/dist/
 var/
 *.log
+CLAUDE.local.md

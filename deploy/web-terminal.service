@@ -9,6 +9,10 @@ WorkingDirectory=%h/web-terminal
 # Use the absolute path of your Node 24+ binary; systemd's PATH is minimal.
 ExecStart=/usr/bin/node server/main.ts
 Environment=WEB_TERMINAL_PORT=3120
+# Shells inherit this; without a UTF-8 locale they fall back to C.UTF-8.
+Environment=LANG=en_US.UTF-8
+# After `npm run build`: picks up the new client without ending open shells.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2
 UMask=0077

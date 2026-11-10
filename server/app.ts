@@ -1,5 +1,4 @@
-// Standalone web terminal: the same account and sign-in as the console, with
-// nothing of the browser behind it. Shells are plain pty sessions.
+// The HTTP side: sign-in, the list of shells, and the built client.
 import type { HttpBindings } from "@hono/node-server";
 import type { IncomingMessage } from "node:http";
 import { Hono } from "hono";
@@ -55,6 +54,14 @@ export function clientAddress(req: IncomingMessage): string {
   const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",").pop()?.trim() ?? "";
   return forwarded || direct;
 }
+
+const terminalOptions = z.object({
+  cols: z.number().finite().optional(),
+  rows: z.number().finite().optional(),
+  dark: z.boolean().optional(),
+});
+
+const terminalName = z.object({ name: z.string().max(200) });
 
 async function readCredentials(c: { req: { json: () => Promise<unknown> } }) {
   const parsed = credentials.safeParse(await c.req.json().catch(() => undefined));
@@ -116,7 +123,15 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
 
   api.get("/session", (c) => c.json({ username: c.get("username") }));
   api.get("/terminals", (c) => c.json(terminals.list()));
-  api.post("/terminals", (c) => c.json(terminals.create()));
+  api.post("/terminals", async (c) => {
+    const options = terminalOptions.safeParse(await c.req.json().catch(() => ({})));
+    return c.json(terminals.create(options.success ? options.data : {}));
+  });
+  api.patch("/terminals/:id", async (c) => {
+    const body = terminalName.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) throw new HttpError(400, "Give the terminal a name of up to 200 characters");
+    return c.json(terminals.rename(c.req.param("id"), body.data.name));
+  });
   api.delete("/terminals/:id", (c) => {
     terminals.kill(c.req.param("id"));
     return c.json({ ok: true });

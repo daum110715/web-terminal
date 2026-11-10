@@ -1,4 +1,4 @@
-// Sets the console account. Interactive on a terminal; otherwise reads the
+// Sets the one account. Interactive on a terminal; otherwise reads the
 // username from WEB_TERMINAL_USERNAME and the password from the first line of stdin.
 import readline from "node:readline/promises";
 import { config } from "./config.ts";

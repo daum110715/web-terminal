@@ -1,0 +1,15 @@
+/* Fallbacks behind whichever code font is chosen. The browser only fetches
+   each one when a character in its range is on screen. */
+@font-face {
+  font-family: "WT Symbols";
+  src: url("./fonts/symbols.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+2070-2BFF, U+1F780-1F7FF, U+1FB00-1FBFF;
+}
+
+@font-face {
+  font-family: "WT Nerd";
+  src: url("./fonts/nerd.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}

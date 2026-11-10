@@ -33,8 +33,15 @@ server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws));
 });
 
+// A rebuilt client is picked up without ending the shells: `systemctl --user reload`.
+process.on("SIGHUP", () => {
+  assets.reload();
+  log.info("client reloaded");
+});
+
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   process.on(signal, () => {
+    terminals.close();
     server.close();
     process.exit(0);
   });

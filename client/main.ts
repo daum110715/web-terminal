@@ -1,36 +1,34 @@
-// Web terminal client: sign in, a row of shells, and a key bar for phones.
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { Terminal, type IDisposable } from "@xterm/xterm";
+// Web terminal client: sign in, a strip of tabs, the shells, and settings.
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/700.css";
+import "@fontsource/jetbrains-mono/400-italic.css";
+import "@fontsource/jetbrains-mono/700-italic.css";
+import "@fontsource/fira-code/400.css";
+import "@fontsource/fira-code/700.css";
+import "@fontsource/cascadia-code/400.css";
+import "@fontsource/cascadia-code/700.css";
+import "@fontsource/cascadia-code/400-italic.css";
+import "@fontsource/cascadia-code/700-italic.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/700.css";
+import "@fontsource/ibm-plex-mono/400-italic.css";
+import "@fontsource/ibm-plex-mono/700-italic.css";
 import "@xterm/xterm/css/xterm.css";
+import "./fonts.css";
 import "./style.css";
+import { h, icon, recall, remember } from "./dom.ts";
+import { language, t } from "./i18n.ts";
+import { applyModifiers, buildKeyBar } from "./keys.ts";
+import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings } from "./settings.ts";
+import { fontsReady, Shell, type ShellHost } from "./shell.ts";
 
 interface TerminalInfo {
   id: string;
   title: string;
+  name: string;
   created: number;
   clients: number;
 }
-
-interface Session {
-  id: string;
-  term: Terminal;
-  fit: FitAddon;
-  mount: HTMLDivElement;
-  socket: WebSocket | null;
-  attempts: number;
-  timer: number;
-  closed: boolean;
-  input: IDisposable;
-  observer: ResizeObserver;
-}
-
-type Props = {
-  class?: string;
-  text?: string;
-  attrs?: Record<string, string>;
-  on?: Record<string, EventListener>;
-};
 
 class HttpFailure extends Error {
   readonly status: number;
@@ -42,80 +40,27 @@ class HttpFailure extends Error {
 }
 
 const LAST = "web-terminal:last";
-const FONT = "web-terminal:font";
-const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
-const encoder = new TextEncoder();
-
-// Same palette as the console's terminal panel, on an opaque cream background
-// (the translucent one renders black here).
-const THEME = {
-  background: "#fcfaf6",
-  foreground: "#44403c",
-  cursor: "#f59e0b",
-  cursorAccent: "#fcfaf6",
-  selectionBackground: "rgba(245, 158, 11, 0.25)",
-  black: "#44403c",
-  red: "#c0392b",
-  green: "#3f7d20",
-  yellow: "#9a6700",
-  blue: "#2459c7",
-  magenta: "#9d2fa8",
-  cyan: "#137a8a",
-  white: "#78716c",
-  brightBlack: "#a8a29e",
-  brightRed: "#d9480f",
-  brightGreen: "#5c940d",
-  brightYellow: "#b7791f",
-  brightBlue: "#3b6fe0",
-  brightMagenta: "#ae3ec9",
-  brightCyan: "#1098ad",
-  brightWhite: "#57534e",
-};
-
-const KEYS: { label: string; send?: string; mod?: "ctrl" | "alt" }[] = [
-  { label: "Esc", send: "\x1b" },
-  { label: "Tab", send: "\t" },
-  { label: "Ctrl", mod: "ctrl" },
-  { label: "Alt", mod: "alt" },
-  { label: "↑", send: "\x1b[A" },
-  { label: "↓", send: "\x1b[B" },
-  { label: "←", send: "\x1b[D" },
-  { label: "→", send: "\x1b[C" },
-  { label: "Home", send: "\x1b[H" },
-  { label: "End", send: "\x1b[F" },
-  { label: "PgUp", send: "\x1b[5~" },
-  { label: "PgDn", send: "\x1b[6~" },
-  { label: "^C", send: "\x03" },
-  { label: "^D", send: "\x04" },
-  { label: "^Z", send: "\x1a" },
-  { label: "|", send: "|" },
-  { label: "~", send: "~" },
-  { label: "/", send: "/" },
-  { label: "-", send: "-" },
-];
-
 const app = document.getElementById("app")!;
-const modifiers = { ctrl: false, alt: false };
-const modButtons = new Map<"ctrl" | "alt", HTMLButtonElement>();
+const coarse = window.matchMedia("(pointer: coarse)");
+
 let terminals: TerminalInfo[] = [];
+const shells = new Map<string, Shell>();
+const unread = new Set<string>();
 let currentId: string | null = null;
-let session: Session | null = null;
-let fontSize = readFontSize();
+/** The tab whose close button is waiting for its second click. */
+let closingId: string | null = null;
+let closingTimer = 0;
+let renaming = false;
+let notice = "";
+let noticeTimer = 0;
+let consoleEl: HTMLElement | null = null;
 let tabsEl: HTMLElement;
 let stageEl: HTMLElement;
+let emptyEl: HTMLElement;
 let statusEl: HTMLElement;
+let keysEl: HTMLElement;
 
 // ------------------------------------------------------------ helpers
-
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...children: Node[]): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (props.class) node.className = props.class;
-  if (props.text !== undefined) node.textContent = props.text;
-  for (const [name, value] of Object.entries(props.attrs ?? {})) node.setAttribute(name, value);
-  for (const [event, listener] of Object.entries(props.on ?? {})) node.addEventListener(event, listener);
-  node.append(...children);
-  return node;
-}
 
 /** Calls the same-origin API. Failures carry the server's own message. */
 async function api<T>(route: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
@@ -131,59 +76,67 @@ async function api<T>(route: string, init: { method?: string; body?: unknown } =
   return data as T;
 }
 
-function readFontSize(): number {
-  try {
-    const saved = Number(localStorage.getItem(FONT));
-    if (saved >= 10 && saved <= 22) return saved;
-  } catch {}
-  return 14;
+/** The page wears the terminal's colors, so the two read as one surface. */
+function paintChrome() {
+  const theme = activeTheme();
+  const root = document.documentElement;
+  root.style.setProperty("--bg", theme.background);
+  root.style.setProperty("--fg", theme.foreground);
+  root.style.setProperty("--accent", theme.accent);
+  root.style.setProperty("--ok", theme.ansi[2]!);
+  root.style.setProperty("--bad", theme.ansi[1]!);
+  root.style.setProperty("--mono", fontFamily());
+  root.style.colorScheme = theme.dark ? "dark" : "light";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.background);
 }
 
-function remember(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
+function showKeys() {
+  if (keysEl) keysEl.hidden = !(settings.keyBar === "on" || (settings.keyBar === "auto" && coarse.matches));
 }
 
-function recall(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+/** Shows a short message where the connection state sits, then lets it go. */
+function flash(text: string) {
+  notice = text;
+  window.clearTimeout(noticeTimer);
+  noticeTimer = window.setTimeout(() => {
+    notice = "";
+    paintStatus();
+  }, 4000);
+  paintStatus();
 }
 
-function setStatus(text: string) {
-  statusEl.textContent = text;
+function paintStatus() {
+  if (!consoleEl) return;
+  const shell = currentId ? shells.get(currentId) : undefined;
+  const state = shell?.status ?? "idle";
+  statusEl.dataset.state = state;
+  statusEl.lastElementChild!.textContent = notice || (state === "connecting" || state === "reconnecting" ? t(state) : "");
+  statusEl.title = state === "connected" ? t("connected") : "";
 }
 
 function handleError(error: unknown) {
-  if (error instanceof HttpFailure && error.status === 401) return showLogin("Your session ended. Sign in again.");
-  setStatus(error instanceof Error ? error.message : String(error));
-}
-
-/** Maps a key to what a terminal expects for Ctrl plus that key. */
-function controlCode(key: string): string {
-  if (key === " ") return "\x00";
-  const code = key.toUpperCase().charCodeAt(0);
-  if (code >= 64 && code <= 95) return String.fromCharCode(code - 64);
-  return key;
+  if (error instanceof HttpFailure && error.status === 401) return showLogin(t("signInAgain"));
+  if (error instanceof HttpFailure && error.status === 409) return flash(t("limit", { n: /\d+/.exec(error.message)?.[0] ?? "" }));
+  flash(error instanceof Error ? error.message : String(error));
 }
 
 // ------------------------------------------------------------ sign in
 
-function showLogin(notice = "") {
-  closeSession();
+function showLogin(message = "") {
+  for (const shell of shells.values()) shell.dispose();
+  shells.clear();
+  unread.clear();
+  consoleEl = null;
   currentId = null;
   terminals = [];
-  const error = h("p", { class: "notice", attrs: { role: "alert" }, text: notice });
+  const error = h("p", { class: "note", attrs: { role: "alert" }, text: message });
   const user = h("input", {
     attrs: { name: "username", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: "", maxlength: "200" },
   });
   const pass = h("input", {
     attrs: { name: "password", type: "password", autocomplete: "current-password", required: "", maxlength: "1000" },
   });
-  const submit = h("button", { class: "primary", text: "Sign in", attrs: { type: "submit" } });
+  const submit = h("button", { class: "primary", text: t("signIn"), attrs: { type: "submit" } });
   const form = h(
     "form",
     {
@@ -195,9 +148,12 @@ function showLogin(notice = "") {
           error.textContent = "";
           try {
             const me = await api<{ username: string }>("session", { method: "POST", body: { username: user.value, password: pass.value } });
-            showConsole(me.username);
+            await showConsole(me.username);
           } catch (failure) {
-            error.textContent = failure instanceof Error ? failure.message : String(failure);
+            const status = failure instanceof HttpFailure ? failure.status : 0;
+            const text = failure instanceof Error ? failure.message : String(failure);
+            error.textContent =
+              status === 401 ? t("badLogin") : status === 429 ? t("tooMany", { n: /\d+/.exec(text)?.[0] ?? "" }) : status ? text : t("unreachable");
             pass.value = "";
             pass.focus();
           } finally {
@@ -206,9 +162,9 @@ function showLogin(notice = "") {
         },
       },
     },
-    h("h1", { text: "Terminal" }),
-    h("label", {}, h("span", { text: "Username" }), user),
-    h("label", {}, h("span", { text: "Password" }), pass),
+    h("h1", {}, h("span", { class: "prompt", text: "❯", attrs: { "aria-hidden": "true" } }), h("span", { text: t("title") })),
+    h("label", {}, h("span", { text: t("username") }), user),
+    h("label", {}, h("span", { text: t("password") }), pass),
     error,
     submit,
   );
@@ -218,117 +174,149 @@ function showLogin(notice = "") {
 
 async function signOut() {
   await api("session", { method: "DELETE" }).catch(() => {});
-  showLogin("Signed out.");
+  showLogin(t("signedOut"));
 }
 
 // ------------------------------------------------------------ console
 
-function showConsole(name: string) {
-  tabsEl = h("div", { class: "tabs", attrs: { role: "tablist", "aria-label": "Terminals" } });
-  stageEl = h("div", { class: "stage" });
-  statusEl = h("span", { class: "status", attrs: { role: "status" } });
+const host: ShellHost = {
+  transform: applyModifiers,
+  status: (shell) => {
+    if (shell.id === currentId) paintStatus();
+  },
+  title: (shell, title) => {
+    const info = terminals.find((terminal) => terminal.id === shell.id);
+    if (!info || info.title === title) return;
+    info.title = title;
+    renderTabs();
+  },
+  activity: (shell) => {
+    if (unread.has(shell.id)) return;
+    unread.add(shell.id);
+    renderTabs();
+  },
+  gone: () => void refresh().then(settle).catch(handleError),
+  unauthorized: () => showLogin(t("signInAgain")),
+};
 
-  const keys = KEYS.map((key) => {
-    if (key.mod) {
-      const mod = key.mod;
-      const button = h("button", {
-        class: "key",
-        text: key.label,
-        attrs: { type: "button", "aria-pressed": "false" },
-        on: {
-          mousedown: (event) => event.preventDefault(),
-          click: () => {
-            modifiers[mod] = !modifiers[mod];
-            paintModifiers();
-            session?.term.focus();
-          },
-        },
-      });
-      modButtons.set(mod, button);
-      return button;
-    }
-    return h("button", {
-      class: "key",
-      text: key.label,
-      attrs: { type: "button" },
-      on: {
-        // Keeps focus in the terminal, so the phone keyboard stays up.
-        mousedown: (event) => event.preventDefault(),
-        click: () => {
-          sendInput(key.send!);
-          session?.term.focus();
-        },
-      },
-    });
+async function showConsole(name: string) {
+  tabsEl = h("div", { class: "tabs", attrs: { role: "tablist", "aria-label": t("title") } });
+  emptyEl = h(
+    "div",
+    { class: "empty" },
+    h("p", { text: t("noShell") }),
+    h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } }),
+  );
+  emptyEl.hidden = true;
+  stageEl = h("div", { class: "stage" }, emptyEl);
+  statusEl = h("span", { class: "status", attrs: { role: "status" } }, h("i", { class: "dot" }), h("span", {}));
+  keysEl = buildKeyBar({
+    send: (data) => current()?.send(data),
+    paste: () => void pasteClipboard(),
+    focus: () => current()?.focus(),
   });
+  showKeys();
 
-  const header = h(
-    "header",
-    { class: "bar" },
-    h("span", { class: "brand", text: "Terminal" }),
-    h("span", { class: "who", text: name }),
-    h("button", { class: "ghost", text: "A-", attrs: { type: "button", "aria-label": "Smaller text" }, on: { click: () => setFontSize(fontSize - 1) } }),
-    h("button", { class: "ghost", text: "A+", attrs: { type: "button", "aria-label": "Larger text" }, on: { click: () => setFontSize(fontSize + 1) } }),
-    h("button", { class: "ghost", text: "Sign out", attrs: { type: "button" }, on: { click: () => void signOut() } }),
+  const close = () => {
+    root.classList.remove("panel-open");
+    current()?.focus();
+  };
+  const panel = buildPanel(name, { close, signOut: () => void signOut() });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  const settingsButton = h(
+    "button",
+    {
+      class: "tool",
+      attrs: { type: "button", "aria-label": t("settings"), title: t("settings") },
+      on: { click: () => (root.classList.toggle("panel-open") ? panel.querySelector("button")?.focus() : close()) },
+    },
+    icon("sliders"),
   );
-
-  app.replaceChildren(
-    h("div", { class: "shell" }, header, tabsEl, stageEl, h("div", { class: "keys" }, ...keys), h("div", { class: "footer" }, statusEl)),
+  const root = h(
+    "div",
+    { class: "app" },
+    h("header", { class: "strip" }, tabsEl, statusEl, settingsButton),
+    stageEl,
+    keysEl,
+    h("div", { class: "scrim", on: { click: close } }),
+    panel,
   );
-  void ensureSession();
-}
+  consoleEl = root;
+  app.replaceChildren(root);
 
-async function refresh(): Promise<TerminalInfo[]> {
-  terminals = await api<TerminalInfo[]>("terminals");
-  renderTabs();
-  return terminals;
-}
-
-function renderTabs() {
-  tabsEl.replaceChildren(
-    ...terminals.map((terminal, index) =>
-      h(
-        "div",
-        { class: terminal.id === currentId ? "tab on" : "tab" },
-        h("button", {
-          class: "tab-label",
-          text: `${index + 1}. ${terminal.title}`,
-          attrs: { type: "button", role: "tab", "aria-selected": String(terminal.id === currentId) },
-          on: { click: () => select(terminal.id) },
-        }),
-        h("button", {
-          class: "tab-close",
-          text: "×",
-          attrs: { type: "button", "aria-label": `End terminal ${index + 1}` },
-          on: {
-            click: (event) => {
-              event.stopPropagation();
-              void end(terminal.id);
-            },
-          },
-        }),
-      ),
-    ),
-    h("button", { class: "tab-new", text: "+", attrs: { type: "button", "aria-label": "New terminal", title: "New terminal" }, on: { click: () => void create() } }),
-  );
-}
-
-async function ensureSession() {
+  await fontsReady();
   try {
     await refresh();
-    const remembered = recall(LAST);
-    const target = terminals.find((t) => t.id === remembered) ?? terminals[0];
-    if (target) select(target.id);
-    else await create();
+    settle();
+    if (!terminals.length) await create();
   } catch (error) {
     handleError(error);
-    renderStage();
   }
+}
+
+/** Shell titles are usually "user@host: path"; the path is the part worth a tab's width. */
+function shortTitle(title: string): string {
+  const path = /^[^\s@]+@[^\s:]+:\s*(.+)$/.exec(title)?.[1] ?? title;
+  const parts = path.split("/");
+  return /^[~/]/.test(path) && parts.length > 3 ? `…/${parts.slice(-2).join("/")}` : path;
+}
+
+function shown(terminal: TerminalInfo): string {
+  return terminal.name || shortTitle(terminal.title);
+}
+
+function current(): Shell | undefined {
+  return currentId ? shells.get(currentId) : undefined;
+}
+
+async function refresh() {
+  terminals = await api<TerminalInfo[]>("terminals");
+  for (const [id, shell] of shells) {
+    if (terminals.some((terminal) => terminal.id === id)) continue;
+    shell.dispose();
+    shells.delete(id);
+    unread.delete(id);
+  }
+  if (currentId && !terminals.some((terminal) => terminal.id === currentId)) currentId = null;
+  renderTabs();
+}
+
+/** Makes sure a tab is showing: the current one, the last used, or the first. */
+function settle() {
+  if (!consoleEl) return;
+  if (currentId) return;
+  const remembered = recall(LAST);
+  const target = terminals.find((terminal) => terminal.id === remembered) ?? terminals[0];
+  if (target) return select(target.id);
+  emptyEl.hidden = false;
+  paintStatus();
+}
+
+function select(id: string) {
+  if (currentId !== id) current()?.hide();
+  currentId = id;
+  unread.delete(id);
+  remember(LAST, id);
+  let shell = shells.get(id);
+  if (!shell) {
+    shell = new Shell(id, stageEl, host);
+    shells.set(id, shell);
+  }
+  emptyEl.hidden = true;
+  shell.show();
+  renderTabs();
+  paintStatus();
 }
 
 async function create() {
   try {
-    const made = await api<TerminalInfo>("terminals", { method: "POST" });
+    const size = current()?.term;
+    const made = await api<TerminalInfo>("terminals", {
+      method: "POST",
+      body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }) },
+    });
     await refresh();
     select(made.id);
   } catch (error) {
@@ -336,188 +324,155 @@ async function create() {
   }
 }
 
+/** The close button asks once more before ending a shell and whatever runs in it. */
 async function end(id: string) {
+  if (closingId !== id) {
+    closingId = id;
+    window.clearTimeout(closingTimer);
+    closingTimer = window.setTimeout(() => {
+      closingId = null;
+      renderTabs();
+    }, 3000);
+    return renderTabs();
+  }
+  closingId = null;
+  window.clearTimeout(closingTimer);
   try {
     await api(`terminals/${id}`, { method: "DELETE" });
   } catch (error) {
     if (!(error instanceof HttpFailure && error.status === 404)) return handleError(error);
   }
-  await refresh().catch(handleError);
-  if (id !== currentId) return;
-  closeSession();
-  currentId = null;
-  const next = terminals[0];
-  if (next) select(next.id);
-  else renderStage();
+  await refresh().then(settle).catch(handleError);
 }
 
-function select(id: string) {
-  if (session?.id === id && !session.closed) return;
-  closeSession();
-  currentId = id;
-  remember(LAST, id);
-  renderTabs();
-  openSession(id);
+function startRename(info: TerminalInfo, label: HTMLElement) {
+  renaming = true;
+  const input = h("input", { class: "tab-rename", attrs: { type: "text", maxlength: "40", "aria-label": t("renameHint") } });
+  input.value = shown(info);
+  let finished = false;
+  const finish = async (save: boolean) => {
+    if (finished) return;
+    finished = true;
+    renaming = false;
+    const name = input.value.trim();
+    if (save && name !== shown(info)) {
+      try {
+        Object.assign(info, await api<TerminalInfo>(`terminals/${info.id}`, { method: "PATCH", body: { name } }));
+      } catch (error) {
+        handleError(error);
+      }
+    }
+    renderTabs();
+    current()?.focus();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void finish(true);
+    if (event.key === "Escape") void finish(false);
+  });
+  input.addEventListener("blur", () => void finish(true));
+  label.replaceWith(input);
+  input.focus();
+  input.select();
 }
 
-function renderStage() {
-  stageEl.replaceChildren(
+function renderTabs() {
+  // An open rename box would be thrown away; the next change repaints.
+  if (!consoleEl || renaming) return;
+  tabsEl.replaceChildren(
+    ...terminals.map((terminal) => {
+      const on = terminal.id === currentId;
+      const label = h("button", {
+        class: "tab-label",
+        text: shown(terminal),
+        attrs: { type: "button", role: "tab", "aria-selected": String(on), title: t("renameHint") },
+        on: {
+          click: () => select(terminal.id),
+          dblclick: () => startRename(terminal, label),
+        },
+      });
+      const confirming = closingId === terminal.id;
+      const close = h(
+        "button",
+        {
+          class: confirming ? "tab-close confirm" : "tab-close",
+          attrs: { type: "button", "aria-label": `${t("closeTerminal")} ${shown(terminal)}` },
+          on: {
+            click: (event) => {
+              event.stopPropagation();
+              void end(terminal.id);
+            },
+          },
+        },
+        confirming ? document.createTextNode(t("confirmClose")) : icon("close"),
+      );
+      return h("div", { class: `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}` }, label, close);
+    }),
     h(
-      "div",
-      { class: "empty" },
-      h("p", { text: "No shell is running." }),
-      h("button", { class: "primary", text: "Open a shell", attrs: { type: "button" }, on: { click: () => void create() } }),
+      "button",
+      { class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") }, on: { click: () => void create() } },
+      icon("plus"),
     ),
   );
+  tabsEl.querySelector(".tab.on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
-// ------------------------------------------------------------ shells
-
-function openSession(id: string) {
-  const mount = h("div", { class: "term" });
-  stageEl.replaceChildren(mount);
-  const term = new Terminal({
-    fontFamily: MONO,
-    fontSize,
-    lineHeight: 1.2,
-    cursorBlink: true,
-    scrollback: 5000,
-    allowTransparency: true,
-    macOptionIsMeta: true,
-    theme: THEME,
-  });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
-  term.open(mount);
-
-  const s: Session = {
-    id,
-    term,
-    fit,
-    mount,
-    socket: null,
-    attempts: 0,
-    timer: 0,
-    closed: false,
-    input: term.onData((data) => sendInput(data)),
-    observer: new ResizeObserver(() => requestAnimationFrame(() => fitAndSend(s))),
-  };
-  s.observer.observe(mount);
-  session = s;
-  setStatus("connecting");
-  connect(s);
-}
-
-function closeSession() {
-  const s = session;
-  if (!s) return;
-  s.closed = true;
-  session = null;
-  window.clearTimeout(s.timer);
-  s.observer.disconnect();
-  s.input.dispose();
-  s.socket?.close(1000);
-  s.term.dispose();
-  s.mount.remove();
-}
-
-function fitAndSend(s: Session) {
-  if (s.closed) return;
+/** The key bar's Paste key, for phones that have no Ctrl+V. */
+async function pasteClipboard() {
+  const shell = current();
+  if (!shell) return;
   try {
-    s.fit.fit();
+    const text = await navigator.clipboard.readText();
+    if (text) shell.paste(text);
   } catch {
-    return;
-  }
-  if (s.socket?.readyState === WebSocket.OPEN) s.socket.send(JSON.stringify({ type: "resize", cols: s.term.cols, rows: s.term.rows }));
-}
-
-function connect(s: Session) {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${scheme}//${location.host}/ws/terminals/${s.id}`);
-  socket.binaryType = "arraybuffer";
-  s.socket = socket;
-  socket.onopen = () => {
-    s.attempts = 0;
-    setStatus("connected");
-    fitAndSend(s);
-  };
-  socket.onmessage = (event) => s.term.write(new Uint8Array(event.data as ArrayBuffer));
-  socket.onclose = (event) => {
-    if (s.closed || socket !== s.socket) return;
-    s.socket = null;
-    if (event.code === 4000) {
-      s.term.write("\r\n\x1b[2m[shell exited]\x1b[0m\r\n");
-      setStatus("shell exited");
-      void refresh().catch(handleError);
-      return;
-    }
-    if (event.code === 4004) {
-      s.term.write("\r\n\x1b[2m[this terminal no longer exists]\x1b[0m\r\n");
-      setStatus("terminal gone");
-      void refresh().catch(handleError);
-      return;
-    }
-    if (s.attempts >= 6) {
-      s.term.write("\r\n\x1b[2m[disconnected: pick the tab again to retry]\x1b[0m\r\n");
-      setStatus("disconnected");
-      return;
-    }
-    const delay = Math.min(16000, 1000 * 2 ** s.attempts);
-    s.attempts++;
-    setStatus(`reconnecting in ${delay / 1000}s`);
-    s.timer = window.setTimeout(() => void retry(s), delay);
-  };
-}
-
-async function retry(s: Session) {
-  if (s.closed) return;
-  try {
-    await api("session");
-  } catch (error) {
-    if (error instanceof HttpFailure && error.status === 401) return showLogin("Your session ended. Sign in again.");
-  }
-  connect(s);
-}
-
-function sendInput(raw: string) {
-  let data = raw;
-  if (modifiers.ctrl && data.length === 1) data = controlCode(data);
-  if (modifiers.alt) data = "\x1b" + data;
-  if (modifiers.ctrl || modifiers.alt) {
-    modifiers.ctrl = false;
-    modifiers.alt = false;
-    paintModifiers();
-  }
-  const socket = session?.socket;
-  if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(data));
-}
-
-function paintModifiers() {
-  for (const [mod, button] of modButtons) {
-    button.classList.toggle("on", modifiers[mod]);
-    button.setAttribute("aria-pressed", String(modifiers[mod]));
-  }
-}
-
-function setFontSize(next: number) {
-  fontSize = Math.min(22, Math.max(10, next));
-  remember(FONT, String(fontSize));
-  if (session) {
-    session.term.options.fontSize = fontSize;
-    fitAndSend(session);
+    flash(t("clipboardDenied"));
   }
 }
 
 // ------------------------------------------------------------ start
 
+onSettingsChange(() => {
+  paintChrome();
+  showKeys();
+  for (const shell of shells.values()) shell.applySettings();
+});
+coarse.addEventListener("change", showKeys);
+
+// A phone's on-screen keyboard covers the page instead of resizing it; follow
+// the part that is actually visible so the prompt stays above the keyboard.
+const viewport = window.visualViewport;
+if (viewport) {
+  const follow = () => {
+    const root = document.documentElement;
+    if (viewport.scale !== 1) return root.style.removeProperty("--app-height");
+    root.style.setProperty("--app-height", `${viewport.height}px`);
+    window.scrollTo(0, 0);
+  };
+  viewport.addEventListener("resize", follow);
+  viewport.addEventListener("scroll", follow);
+  follow();
+}
+
 async function boot() {
+  document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+  document.title = t("title");
+  paintChrome();
   try {
     const me = await api<{ username: string }>("session");
-    showConsole(me.username);
+    await showConsole(me.username);
   } catch (error) {
     if (error instanceof HttpFailure && error.status === 401) return showLogin();
-    app.replaceChildren(h("main", { class: "center" }, h("p", { class: "notice", attrs: { role: "alert" }, text: "The terminal service is not answering. Reload to try again." })));
+    app.replaceChildren(
+      h(
+        "main",
+        { class: "center" },
+        h(
+          "div",
+          { class: "login" },
+          h("p", { class: "note", attrs: { role: "alert" }, text: t("unreachable") }),
+          h("button", { class: "primary", text: t("retry"), attrs: { type: "button" }, on: { click: () => location.reload() } }),
+        ),
+      ),
+    );
   }
 }
 

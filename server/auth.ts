@@ -14,7 +14,7 @@ const scryptAsync = promisify(scrypt) as (
 ) => Promise<Buffer>;
 
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 2 ** 20 };
-export const COOKIE = "rb_session";
+export const COOKIE = "wt_session";
 const MAX_AGE = 90 * 86400;
 const RENEW_BELOW = 60 * 86400;
 
