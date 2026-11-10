@@ -17,6 +17,39 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
   return node;
 }
 
+/** Keep existing controls mounted so updates cannot interrupt clicks or focus. */
+export function reconcile(parent: HTMLElement, children: Node[]) {
+  let next = parent.firstChild;
+  for (const child of children) {
+    if (child === next) next = next.nextSibling;
+    else parent.insertBefore(child, next);
+  }
+  while (next) {
+    const old = next;
+    next = old.nextSibling;
+    old.remove();
+  }
+}
+
+let pointerDown = false;
+const deferred: (() => void)[] = [];
+window.addEventListener("pointerdown", () => (pointerDown = true), { capture: true });
+const release = () => {
+  pointerDown = false;
+  // The click follows pointerup; finish its dispatch before moving any controls.
+  window.setTimeout(() => {
+    if (!pointerDown) for (const action of deferred.splice(0)) action();
+  }, 0);
+};
+window.addEventListener("pointerup", release, { capture: true });
+window.addEventListener("pointercancel", release, { capture: true });
+window.addEventListener("blur", release);
+
+export function afterPointer(action: () => void) {
+  if (pointerDown) deferred.push(action);
+  else action();
+}
+
 const PATHS = {
   plus: "M8 3v10M3 8h10",
   close: "M4 4l8 8M12 4l-8 8",

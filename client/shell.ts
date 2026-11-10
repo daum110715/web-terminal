@@ -15,7 +15,7 @@ export type ShellStatus = "connecting" | "connected" | "reconnecting";
 
 export interface ShellHost {
   /** Applies the key bar's Ctrl and Alt to what was typed. */
-  transform(data: string): string;
+  transform(data: string, applicationCursorKeys?: boolean): string;
   status(shell: Shell): void;
   title(shell: Shell, title: string): void;
   /** Output arrived while the tab was in the background. */
@@ -139,7 +139,21 @@ export class Shell {
     this.touchScroll = new TouchScroll(term);
     this.startWebgl();
 
-    term.onData((data) => this.send(this.host.transform(data)));
+    let keyboardData: string | null = null;
+    const typed = (data: string) => {
+      keyboardData = data;
+      queueMicrotask(() => (keyboardData = null));
+    };
+    term.onKey(({ key }) => typed(key));
+    term.textarea?.addEventListener("input", (event) => {
+      if (event instanceof InputEvent && event.data) typed(event.data);
+    }, { capture: true });
+    term.onData((data) => {
+      // Focus and color reports are terminal replies, not the next latched key.
+      const keyboard = keyboardData === data;
+      if (keyboard) keyboardData = null;
+      this.send(keyboard ? this.host.transform(data) : data);
+    });
     // Legacy mouse reports contain bytes that must not be encoded as UTF-8.
     term.onBinary((data) => {
       if (this.socket?.readyState === WebSocket.OPEN)
@@ -226,6 +240,10 @@ export class Shell {
 
   send(data: string) {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(encoder.encode(data));
+  }
+
+  key(data: string) {
+    this.send(this.host.transform(data, this.term.modes.applicationCursorKeysMode));
   }
 
   paste(text: string) {

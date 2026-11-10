@@ -396,40 +396,34 @@ textarea {
 
 /* ------------------------------------------------------------ settings */
 
-/* The scrim is clear on purpose: the terminal behind it is the preview. */
-.scrim {
-  display: none;
-  position: fixed;
-  z-index: 1;
-  inset: 0;
-}
-
 .panel {
   position: fixed;
-  z-index: 2;
+  left: auto;
   top: 0;
   right: 0;
   bottom: 0;
+  margin: 0;
   width: min(380px, 100vw);
+  max-width: none;
+  height: 100%;
+  max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y pinch-zoom;
   padding-bottom: env(safe-area-inset-bottom);
+  padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+  color: var(--fg);
   background: var(--bg);
+  border: 0;
   border-left: 1px solid var(--line);
   box-shadow: 0 0 48px color-mix(in srgb, var(--fg) 16%, transparent);
-  visibility: hidden;
-  transform: translateX(100%);
-  transition: transform 0.18s ease-out, visibility 0.18s;
 }
 
-.panel-open .panel {
-  visibility: visible;
-  transform: none;
-}
-
-.panel-open .scrim {
-  display: block;
+.panel::backdrop {
+  /* Keep the terminal visible as the settings preview. */
+  background: transparent;
 }
 
 .panel-head {
@@ -679,12 +673,10 @@ textarea {
     border-left: 0;
     border-top: 1px solid var(--line);
     border-radius: 14px 14px 0 0;
-    transform: translateY(100%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .panel,
   .switch input,
   .switch input::after {
     transition: none;

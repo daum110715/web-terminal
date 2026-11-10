@@ -18,7 +18,8 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。标签切到后台时不销毁，也不参与尺寸计算。
 - `client/touch-scroll.ts` 单指拖动和惯性滚动。普通 shell 滚动本地历史，全屏程序沿用 xterm 的滚轮处理，保留鼠标编码和方向键模式。
 - `client/themes.ts` 主题。调色板必须如实：黑是深色、白是浅色，浅色主题也一样。可读性靠 `minimumContrastRatio`，不靠把颜色对调。
-- `client/settings.ts` 设置的存取和面板。`client/i18n.ts` 中英文案。
+- `client/settings.ts` 设置的存取和原生 dialog 面板。`client/i18n.ts` 中英文案。
+- `client/dom.ts` 节点协调和点击期间的更新延迟。标签和主题控件保留原节点，避免后台更新打断点击、双击和焦点。
 - `client/fonts/` 两个回退字体由 `tools/subset-fonts.py` 生成，不手改。
 
 ## 约定
@@ -28,6 +29,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - 页面没有自己的配色，全部取自当前终端主题（`main.ts` 的 `paintChrome`）。
 - 安全策略是 `font-src 'self'`，所以 Vite 不内联任何资源（`assetsInlineLimit: 0`）。
 - 界面文案不加标点，中英文都要补。
+- 控件不要随状态更新整块重建。重命名失焦保存不得抢走下一次点击的焦点。按键栏修饰键只处理用户输入，不处理终端的查询应答。
 - 只改了客户端：`npm run build` 后 reload 服务即可，不会断开已有 shell。改了服务端要 restart，会结束所有 shell。
 
 ## 验证

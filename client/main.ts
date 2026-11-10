@@ -16,7 +16,7 @@ import "@fontsource/ibm-plex-mono/700-italic.css";
 import "@xterm/xterm/css/xterm.css";
 import "./fonts.css";
 import "./style.css";
-import { h, icon, recall, remember } from "./dom.ts";
+import { afterPointer, h, icon, recall, reconcile, remember } from "./dom.ts";
 import { language, t } from "./i18n.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
 import { activeTheme, buildPanel, fontFamily, onSettingsChange, settings } from "./settings.ts";
@@ -50,7 +50,11 @@ let currentId: string | null = null;
 /** The tab whose close button is waiting for its second click. */
 let closingId: string | null = null;
 let closingTimer = 0;
-let renaming = false;
+let creating = false;
+const deleting = new Set<string>();
+const tabViews = new Map<string, { element: HTMLElement; label: HTMLButtonElement; close: HTMLButtonElement }>();
+let tabsPending = false;
+let panelEvents: AbortController | null = null;
 let notice = "";
 let noticeTimer = 0;
 let consoleEl: HTMLElement | null = null;
@@ -59,6 +63,8 @@ let stageEl: HTMLElement;
 let emptyEl: HTMLElement;
 let statusEl: HTMLElement;
 let keysEl: HTMLElement;
+let newButton: HTMLButtonElement;
+let openButton: HTMLButtonElement;
 
 // ------------------------------------------------------------ helpers
 
@@ -123,6 +129,9 @@ function handleError(error: unknown) {
 // ------------------------------------------------------------ sign in
 
 function showLogin(message = "") {
+  panelEvents?.abort();
+  panelEvents = null;
+  tabViews.clear();
   for (const shell of shells.values()) shell.dispose();
   shells.clear();
   unread.clear();
@@ -200,37 +209,57 @@ const host: ShellHost = {
 };
 
 async function showConsole(name: string) {
+  panelEvents?.abort();
+  panelEvents = new AbortController();
+  tabViews.clear();
   tabsEl = h("div", { class: "tabs", attrs: { role: "tablist", "aria-label": t("title") } });
+  newButton = h("button", {
+    class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") },
+    on: { click: () => void create() },
+  }, icon("plus"));
+  tabsEl.append(newButton);
+  openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } });
   emptyEl = h(
     "div",
     { class: "empty" },
     h("p", { text: t("noShell") }),
-    h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } }),
+    openButton,
   );
   emptyEl.hidden = true;
   stageEl = h("div", { class: "stage" }, emptyEl);
   statusEl = h("span", { class: "status", attrs: { role: "status" } }, h("i", { class: "dot" }), h("span", {}));
   keysEl = buildKeyBar({
-    send: (data) => current()?.send(data),
+    send: (data) => current()?.key(data),
     paste: () => void pasteClipboard(),
     focus: () => current()?.focus(),
   });
   showKeys();
 
   const close = () => {
-    root.classList.remove("panel-open");
+    panel.close();
     current()?.focus();
   };
-  const panel = buildPanel(name, { close, signOut: () => void signOut() });
-  panel.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") close();
+  const panel = buildPanel(name, { close, signOut: () => void signOut() }, panelEvents.signal);
+  panel.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+  const outside = (event: MouseEvent) => {
+    const rect = panel.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom;
+  };
+  let backdropDown = false;
+  panel.addEventListener("pointerdown", (event) => { backdropDown = outside(event); });
+  panel.addEventListener("click", (event) => {
+    if (backdropDown && outside(event)) close();
+    backdropDown = false;
   });
   const settingsButton = h(
     "button",
     {
       class: "tool",
       attrs: { type: "button", "aria-label": t("settings"), title: t("settings") },
-      on: { click: () => (root.classList.toggle("panel-open") ? panel.querySelector("button")?.focus() : close()) },
+      on: { click: () => panel.showModal() },
     },
     icon("sliders"),
   );
@@ -240,7 +269,6 @@ async function showConsole(name: string) {
     h("header", { class: "strip" }, tabsEl, statusEl, settingsButton),
     stageEl,
     keysEl,
-    h("div", { class: "scrim", on: { click: close } }),
     panel,
   );
   consoleEl = root;
@@ -295,6 +323,7 @@ function settle() {
 }
 
 function select(id: string) {
+  const changed = currentId !== id;
   if (currentId !== id) current()?.hide();
   currentId = id;
   unread.delete(id);
@@ -307,10 +336,15 @@ function select(id: string) {
   emptyEl.hidden = true;
   shell.show();
   renderTabs();
+  if (changed) tabViews.get(id)?.element.scrollIntoView({ block: "nearest", inline: "nearest" });
   paintStatus();
 }
 
 async function create() {
+  if (creating) return;
+  creating = true;
+  newButton.disabled = true;
+  openButton.disabled = true;
   try {
     const size = current()?.term;
     const made = await api<TerminalInfo>("terminals", {
@@ -321,11 +355,16 @@ async function create() {
     select(made.id);
   } catch (error) {
     handleError(error);
+  } finally {
+    creating = false;
+    newButton.disabled = false;
+    openButton.disabled = false;
   }
 }
 
 /** The close button asks once more before ending a shell and whatever runs in it. */
 async function end(id: string) {
+  if (deleting.has(id)) return;
   if (closingId !== id) {
     closingId = id;
     window.clearTimeout(closingTimer);
@@ -337,23 +376,28 @@ async function end(id: string) {
   }
   closingId = null;
   window.clearTimeout(closingTimer);
+  deleting.add(id);
+  renderTabs();
   try {
     await api(`terminals/${id}`, { method: "DELETE" });
   } catch (error) {
     if (!(error instanceof HttpFailure && error.status === 404)) return handleError(error);
+  } finally {
+    deleting.delete(id);
+    renderTabs();
   }
   await refresh().then(settle).catch(handleError);
 }
 
 function startRename(info: TerminalInfo, label: HTMLElement) {
-  renaming = true;
+  if (!label.isConnected) return;
   const input = h("input", { class: "tab-rename", attrs: { type: "text", maxlength: "40", "aria-label": t("renameHint") } });
   input.value = shown(info);
   let finished = false;
-  const finish = async (save: boolean) => {
+  const finish = async (save: boolean, restoreFocus = false) => {
     if (finished) return;
     finished = true;
-    renaming = false;
+    input.readOnly = true;
     const name = input.value.trim();
     if (save && name !== shown(info)) {
       try {
@@ -362,12 +406,19 @@ function startRename(info: TerminalInfo, label: HTMLElement) {
         handleError(error);
       }
     }
-    renderTabs();
-    current()?.focus();
+    afterPointer(() => {
+      const focus = restoreFocus && document.activeElement === input;
+      input.replaceWith(label);
+      renderTabs();
+      if (focus) current()?.focus();
+    });
   };
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") void finish(true);
-    if (event.key === "Escape") void finish(false);
+    if (event.key === "Enter" || event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      void finish(event.key === "Enter", true);
+    }
   });
   input.addEventListener("blur", () => void finish(true));
   label.replaceWith(input);
@@ -376,44 +427,49 @@ function startRename(info: TerminalInfo, label: HTMLElement) {
 }
 
 function renderTabs() {
-  // An open rename box would be thrown away; the next change repaints.
-  if (!consoleEl || renaming) return;
-  tabsEl.replaceChildren(
-    ...terminals.map((terminal) => {
+  if (!consoleEl || tabsPending) return;
+  tabsPending = true;
+  afterPointer(() => {
+    tabsPending = false;
+    if (!consoleEl) return;
+    for (const [id] of tabViews) if (!terminals.some((terminal) => terminal.id === id)) tabViews.delete(id);
+    const elements = terminals.map((terminal) => {
       const on = terminal.id === currentId;
-      const label = h("button", {
-        class: "tab-label",
-        text: shown(terminal),
-        attrs: { type: "button", role: "tab", "aria-selected": String(on), title: t("renameHint") },
-        on: {
-          click: () => select(terminal.id),
-          dblclick: () => startRename(terminal, label),
-        },
-      });
-      const confirming = closingId === terminal.id;
-      const close = h(
-        "button",
-        {
-          class: confirming ? "tab-close confirm" : "tab-close",
-          attrs: { type: "button", "aria-label": `${t("closeTerminal")} ${shown(terminal)}` },
+      let view = tabViews.get(terminal.id);
+      if (!view) {
+        const id = terminal.id;
+        const label = h("button", {
+          class: "tab-label",
+          attrs: { type: "button", role: "tab", title: t("renameHint") },
           on: {
-            click: (event) => {
-              event.stopPropagation();
-              void end(terminal.id);
+            click: () => select(id),
+            dblclick: () => {
+              const info = terminals.find((entry) => entry.id === id);
+              if (info) startRename(info, label);
             },
           },
-        },
-        confirming ? document.createTextNode(t("confirmClose")) : icon("close"),
-      );
-      return h("div", { class: `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}` }, label, close);
-    }),
-    h(
-      "button",
-      { class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") }, on: { click: () => void create() } },
-      icon("plus"),
-    ),
-  );
-  tabsEl.querySelector(".tab.on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        });
+        const close = h("button", {
+          class: "tab-close", attrs: { type: "button" },
+          on: { click: () => void end(id) },
+        }, icon("close"));
+        view = { element: h("div", { class: "tab", attrs: { "data-terminal": id } }, label, close), label, close };
+        tabViews.set(id, view);
+      }
+      view.element.className = `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}`;
+      if (view.label.textContent !== shown(terminal)) view.label.textContent = shown(terminal);
+      view.label.setAttribute("aria-selected", String(on));
+      view.close.setAttribute("aria-label", `${t("closeTerminal")} ${shown(terminal)}`);
+      view.close.disabled = deleting.has(terminal.id);
+      const confirming = closingId === terminal.id;
+      if (view.close.classList.contains("confirm") !== confirming) {
+        view.close.className = confirming ? "tab-close confirm" : "tab-close";
+        view.close.replaceChildren(confirming ? document.createTextNode(t("confirmClose")) : icon("close"));
+      }
+      return view.element;
+    });
+    reconcile(tabsEl, [...elements, newButton]);
+  });
 }
 
 /** The key bar's Paste key, for phones that have no Ctrl+V. */

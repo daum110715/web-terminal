@@ -1,5 +1,5 @@
 // What the person has chosen, kept in this browser, and the panel that edits it.
-import { h, recall, remember } from "./dom.ts";
+import { h, recall, reconcile, remember } from "./dom.ts";
 import { LANGUAGE_KEY, t, type Language } from "./i18n.ts";
 import { importTheme, isTheme, THEMES, type Theme } from "./themes.ts";
 
@@ -84,8 +84,9 @@ function notify() {
 }
 
 /** Runs whenever a setting, or the system's light/dark preference, changes. */
-export function onSettingsChange(listener: () => void) {
+export function onSettingsChange(listener: () => void, signal?: AbortSignal) {
   listeners.add(listener);
+  signal?.addEventListener("abort", () => listeners.delete(listener), { once: true });
 }
 
 export function update(patch: Partial<Settings>) {
@@ -127,20 +128,18 @@ export function contrastRatio(theme: Theme): number {
 
 // ------------------------------------------------------------ panel
 
-function segmented<T extends string>(label: string, options: [T, string][], current: () => T, choose: (value: T) => void): HTMLElement {
+function segmented<T extends string>(label: string, options: [T, string][], current: () => T, choose: (value: T) => void, signal: AbortSignal): HTMLElement {
   const buttons = options.map(([value, text]) =>
     h("button", {
       class: "seg",
       text,
       attrs: { type: "button", "aria-pressed": String(current() === value) },
-      on: {
-        click: () => {
-          choose(value);
-          for (const [i, button] of buttons.entries()) button.setAttribute("aria-pressed", String(options[i]![0] === current()));
-        },
-      },
+      on: { click: () => choose(value) },
     }),
   );
+  onSettingsChange(() => {
+    for (const [i, button] of buttons.entries()) button.setAttribute("aria-pressed", String(options[i]![0] === current()));
+  }, signal);
   return h("div", { class: "segs", attrs: { role: "group", "aria-label": label } }, ...buttons);
 }
 
@@ -189,7 +188,7 @@ function themeTile(theme: Theme, selected: boolean, choose: () => void, remove?:
   sample.style.background = theme.background;
   const tile = h(
     "button",
-    { class: "tile", attrs: { type: "button", "aria-pressed": String(selected) }, on: { click: choose } },
+    { class: "tile", attrs: { type: "button", "data-theme": theme.id, "aria-pressed": String(selected) }, on: { click: choose } },
     sample,
     h("span", { class: "tile-name", text: theme.name }),
   );
@@ -207,50 +206,33 @@ function themeTile(theme: Theme, selected: boolean, choose: () => void, remove?:
   );
 }
 
-export function buildPanel(account: string, actions: { close: () => void; signOut: () => void }): HTMLElement {
-  const themeArea = h("div", { class: "themes" });
-
+export function buildPanel(account: string, actions: { close: () => void; signOut: () => void }, signal: AbortSignal): HTMLDialogElement {
+  const lightTiles = h("div", { class: "tiles" });
+  const darkTiles = h("div", { class: "tiles" });
+  const themeArea = h("div", { class: "themes" },
+    segmented<Settings["appearance"]>(t("theme"), [["system", t("system")], ["light", t("light")], ["dark", t("dark")]],
+      () => settings.appearance, (appearance) => update({ appearance }), signal),
+    h("h3", { text: t("light") }), lightTiles,
+    h("h3", { text: t("dark") }), darkTiles,
+  );
+  const tiles = new Map<string, HTMLElement>();
   const paintThemes = () => {
     const active = activeTheme();
-    const group = (dark: boolean) =>
-      h(
-        "div",
-        { class: "tiles" },
-        ...allThemes()
-          .filter((theme) => theme.dark === dark)
-          .map((theme) =>
-            themeTile(
-              theme,
-              theme.id === active.id,
-              // Picking a theme of the other kind also switches to that kind, so the click always shows.
-              () =>
-                update({
-                  ...(theme.dark ? { darkTheme: theme.id } : { lightTheme: theme.id }),
-                  ...(theme.dark !== active.dark && { appearance: theme.dark ? "dark" : "light" }),
-                }),
-              theme.custom ? () => update({ customThemes: settings.customThemes.filter((entry) => entry.id !== theme.id) }) : undefined,
-            ),
-          ),
-      );
-    themeArea.replaceChildren(
-      segmented<Settings["appearance"]>(
-        t("theme"),
-        [
-          ["system", t("system")],
-          ["light", t("light")],
-          ["dark", t("dark")],
-        ],
-        () => settings.appearance,
-        (appearance) => update({ appearance }),
-      ),
-      h("h3", { text: t("light") }),
-      group(false),
-      h("h3", { text: t("dark") }),
-      group(true),
-    );
+    const themes = allThemes();
+    for (const id of tiles.keys()) if (!themes.some((theme) => theme.id === id)) tiles.delete(id);
+    for (const theme of themes) {
+      if (!tiles.has(theme.id)) tiles.set(theme.id, themeTile(theme, false, () => update({
+        ...(theme.dark ? { darkTheme: theme.id } : { lightTheme: theme.id }),
+        ...(theme.dark !== activeTheme().dark && { appearance: theme.dark ? "dark" : "light" }),
+      }), theme.custom ? () => update({ customThemes: settings.customThemes.filter((entry) => entry.id !== theme.id) }) : undefined));
+      const tile = tiles.get(theme.id)!;
+      (tile.matches(".tile") ? tile : tile.querySelector(".tile")!).setAttribute("aria-pressed", String(theme.id === active.id));
+    }
+    reconcile(lightTiles, themes.filter((theme) => !theme.dark).map((theme) => tiles.get(theme.id)!));
+    reconcile(darkTiles, themes.filter((theme) => theme.dark).map((theme) => tiles.get(theme.id)!));
   };
   paintThemes();
-  onSettingsChange(paintThemes);
+  onSettingsChange(paintThemes, signal);
 
   const importText = h("textarea", { attrs: { rows: "4", spellcheck: "false", placeholder: t("importHint"), "aria-label": t("importHint") } });
   const importNote = h("p", { class: "note", attrs: { role: "alert" } });
@@ -329,7 +311,7 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
   languageSelect.value = ((recall(LANGUAGE_KEY) as Language | null) ?? "auto") satisfies string;
 
   return h(
-    "aside",
+    "dialog",
     { class: "panel", attrs: { "aria-label": t("settings") } },
     h(
       "div",
@@ -374,6 +356,7 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
         ],
         () => settings.cursorStyle,
         (cursorStyle) => update({ cursorStyle }),
+        signal,
       ),
       toggle(t("blink"), () => settings.cursorBlink, (cursorBlink) => update({ cursorBlink })),
     ),
@@ -393,6 +376,7 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
           ],
           () => settings.keyBar,
           (keyBar) => update({ keyBar }),
+          signal,
         ),
       ),
       row(t("language"), languageSelect),

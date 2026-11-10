@@ -40,11 +40,21 @@ function controlCode(key: string): string {
 }
 
 /** Applies a latched Ctrl or Alt to the next thing typed, then releases it. */
-export function applyModifiers(raw: string): string {
-  if (!modifiers.ctrl && !modifiers.alt) return raw;
+export function applyModifiers(raw: string, applicationCursorKeys?: boolean): string {
+  if (!modifiers.ctrl && !modifiers.alt && applicationCursorKeys === undefined) return raw;
   let data = raw;
-  if (modifiers.ctrl && data.length === 1) data = controlCode(data);
-  if (modifiers.alt) data = "\x1b" + data;
+  const cursor = /^\x1b(?:\[|O)([ABCDHF])$/.exec(raw);
+  const page = /^\x1b\[([56])~$/.exec(raw);
+  const modifier = 1 + (modifiers.ctrl ? 4 : 0) + (modifiers.alt ? 2 : 0);
+  if (cursor) {
+    const application = applicationCursorKeys ?? (raw[1] === "O");
+    data = modifier > 1 ? `\x1b[1;${modifier}${cursor[1]}` : `\x1b${application ? "O" : "["}${cursor[1]}`;
+  } else if (page && modifier > 1) {
+    data = `\x1b[${page[1]};${modifier}~`;
+  } else {
+    if (modifiers.ctrl && data.length === 1) data = controlCode(data);
+    if (modifiers.alt) data = "\x1b" + data;
+  }
   modifiers.ctrl = false;
   modifiers.alt = false;
   paint();
@@ -52,6 +62,9 @@ export function applyModifiers(raw: string): string {
 }
 
 export function buildKeyBar(actions: { send: (data: string) => void; paste: () => void; focus: () => void }): HTMLElement {
+  modifiers.ctrl = false;
+  modifiers.alt = false;
+  modButtons.clear();
   // Keeps focus in the terminal, so the phone keyboard stays up.
   const keepFocus = (event: Event) => event.preventDefault();
   const key = (label: string, click: () => void, pressed?: boolean) =>
@@ -68,7 +81,7 @@ export function buildKeyBar(actions: { send: (data: string) => void; paste: () =
       },
     });
   const buttons = KEYS.map((entry) => {
-    if (!entry.mod) return key(entry.label, () => actions.send(applyModifiers(entry.send!)));
+    if (!entry.mod) return key(entry.label, () => actions.send(entry.send!));
     const mod = entry.mod;
     const button = key(
       entry.label,
