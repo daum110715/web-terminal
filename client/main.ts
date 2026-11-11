@@ -42,6 +42,8 @@ class HttpFailure extends Error {
 const LAST = "web-terminal:last";
 const app = document.getElementById("app")!;
 const coarse = window.matchMedia("(pointer: coarse)");
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+const GLIDE: KeyframeAnimationOptions = { duration: 220, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" };
 
 let terminals: TerminalInfo[] = [];
 const shells = new Map<string, Shell>();
@@ -54,6 +56,12 @@ let creating = false;
 const deleting = new Set<string>();
 const tabViews = new Map<string, { element: HTMLElement; label: HTMLButtonElement; close: HTMLButtonElement }>();
 let tabsPending = false;
+/** False until the strip has been drawn once, so the first paint does not animate. */
+let tabsPainted = false;
+/** Where the open tab's surface last went, as "left,width". */
+let inkAt = "";
+let inkEl: HTMLElement;
+const tabsWatch = new ResizeObserver(() => placeInk(false));
 let panelEvents: AbortController | null = null;
 let notice = "";
 let noticeTimer = 0;
@@ -153,6 +161,7 @@ function showLogin(message = "") {
       on: {
         submit: async (event) => {
           event.preventDefault();
+          const shaken = event.currentTarget as HTMLElement;
           submit.disabled = true;
           error.textContent = "";
           try {
@@ -165,6 +174,9 @@ function showLogin(message = "") {
               status === 401 ? t("badLogin") : status === 429 ? t("tooMany", { n: /\d+/.exec(text)?.[0] ?? "" }) : status ? text : t("unreachable");
             pass.value = "";
             pass.focus();
+            if (!calm.matches) {
+              shaken.animate({ transform: ["none", "translateX(-6px)", "translateX(5px)", "translateX(-3px)", "none"] }, { duration: 280, easing: "ease-out" });
+            }
           } finally {
             submit.disabled = false;
           }
@@ -212,12 +224,17 @@ async function showConsole(name: string) {
   panelEvents?.abort();
   panelEvents = new AbortController();
   tabViews.clear();
+  tabsWatch.disconnect();
+  tabsPainted = false;
+  inkAt = "";
   tabsEl = h("div", { class: "tabs", attrs: { role: "tablist", "aria-label": t("title") } });
+  inkEl = h("i", { class: "tab-ink", attrs: { "aria-hidden": "true" } });
+  inkEl.hidden = true;
   newButton = h("button", {
     class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") },
     on: { click: () => void create() },
   }, icon("plus"));
-  tabsEl.append(newButton);
+  tabsEl.append(inkEl, newButton);
   openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } });
   emptyEl = h(
     "div",
@@ -426,13 +443,39 @@ function startRename(info: TerminalInfo, label: HTMLElement) {
   input.select();
 }
 
+/** Moves the open tab's surface under the open tab. It glides when the strip was
+    redrawn and follows exactly when a tab is only changing size. */
+function placeInk(glide: boolean) {
+  if (!consoleEl) return;
+  const tab = currentId ? tabViews.get(currentId)?.element : undefined;
+  if (!tab?.isConnected) {
+    inkEl.hidden = true;
+    inkAt = "";
+    return;
+  }
+  const at = `${tab.offsetLeft},${tab.offsetWidth}`;
+  if (at === inkAt) return;
+  inkEl.classList.toggle("glide", glide && inkAt !== "");
+  inkAt = at;
+  inkEl.hidden = false;
+  inkEl.style.width = `${tab.offsetWidth}px`;
+  inkEl.style.transform = `translateX(${tab.offsetLeft}px)`;
+}
+
 function renderTabs() {
   if (!consoleEl || tabsPending) return;
   tabsPending = true;
   afterPointer(() => {
     tabsPending = false;
     if (!consoleEl) return;
-    for (const [id] of tabViews) if (!terminals.some((terminal) => terminal.id === id)) tabViews.delete(id);
+    for (const [id, view] of tabViews) {
+      if (terminals.some((terminal) => terminal.id === id)) continue;
+      tabsWatch.unobserve(view.element);
+      tabViews.delete(id);
+    }
+    const moving = tabsPainted && !calm.matches;
+    const before = new Map<Element, number>();
+    if (moving) for (const child of tabsEl.children) before.set(child, (child as HTMLElement).offsetLeft);
     const elements = terminals.map((terminal) => {
       const on = terminal.id === currentId;
       let view = tabViews.get(terminal.id);
@@ -452,23 +495,30 @@ function renderTabs() {
         const close = h("button", {
           class: "tab-close", attrs: { type: "button" },
           on: { click: () => void end(id) },
-        }, icon("close"));
+        }, icon("close"), h("span", { class: "tab-ask" }, h("span", { text: t("confirmClose") })));
         view = { element: h("div", { class: "tab", attrs: { "data-terminal": id } }, label, close), label, close };
         tabViews.set(id, view);
+        tabsWatch.observe(view.element);
       }
-      view.element.className = `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}`;
+      view.element.className = `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}${deleting.has(terminal.id) ? " going" : ""}`;
       if (view.label.textContent !== shown(terminal)) view.label.textContent = shown(terminal);
       view.label.setAttribute("aria-selected", String(on));
       view.close.setAttribute("aria-label", `${t("closeTerminal")} ${shown(terminal)}`);
       view.close.disabled = deleting.has(terminal.id);
-      const confirming = closingId === terminal.id;
-      if (view.close.classList.contains("confirm") !== confirming) {
-        view.close.className = confirming ? "tab-close confirm" : "tab-close";
-        view.close.replaceChildren(confirming ? document.createTextNode(t("confirmClose")) : icon("close"));
-      }
+      view.close.classList.toggle("confirm", closingId === terminal.id);
       return view.element;
     });
-    reconcile(tabsEl, [...elements, newButton]);
+    reconcile(tabsEl, [inkEl, ...elements, newButton]);
+    // Tabs that are new fade in; the ones that had to move slide from where they were.
+    if (moving) {
+      for (const child of [...elements, newButton]) {
+        const was = before.get(child);
+        if (was === undefined) child.animate({ opacity: [0, 1], transform: ["translateY(5px)", "none"] }, GLIDE);
+        else if (was !== child.offsetLeft) child.animate({ transform: [`translateX(${was - child.offsetLeft}px)`, "none"] }, GLIDE);
+      }
+    }
+    placeInk(true);
+    tabsPainted = true;
   });
 }
 
@@ -512,6 +562,8 @@ async function boot() {
   document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
   document.title = t("title");
   paintChrome();
+  // Later theme changes blend; the first paint must not fade in from the defaults.
+  requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("live")));
   try {
     const me = await api<{ username: string }>("session");
     await showConsole(me.username);

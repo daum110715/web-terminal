@@ -137,10 +137,16 @@ function segmented<T extends string>(label: string, options: [T, string][], curr
       on: { click: () => choose(value) },
     }),
   );
+  const group = h("div", { class: "segs", attrs: { role: "group", "aria-label": label } }, ...buttons);
+  // The thumb behind the chosen option slides; CSS places it from these two numbers.
+  const place = () => group.style.setProperty("--i", String(options.findIndex(([value]) => value === current())));
+  group.style.setProperty("--n", String(options.length));
+  place();
   onSettingsChange(() => {
     for (const [i, button] of buttons.entries()) button.setAttribute("aria-pressed", String(options[i]![0] === current()));
+    place();
   }, signal);
-  return h("div", { class: "segs", attrs: { role: "group", "aria-label": label } }, ...buttons);
+  return group;
 }
 
 function row(label: string, control: Node): HTMLElement {
