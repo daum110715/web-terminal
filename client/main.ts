@@ -186,8 +186,8 @@ function showLogin(message = "") {
     h("h1", {}, h("span", { class: "prompt", text: "❯", attrs: { "aria-hidden": "true" } }), h("span", { text: t("title") })),
     h("label", {}, h("span", { text: t("username") }), user),
     h("label", {}, h("span", { text: t("password") }), pass),
-    error,
     submit,
+    error,
   );
   app.replaceChildren(h("main", { class: "center" }, form));
   user.focus();
