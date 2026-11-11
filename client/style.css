@@ -33,10 +33,20 @@
   --wash: color-mix(in srgb, var(--fg) 12%, var(--bg));
   --strip: color-mix(in srgb, var(--fg) 6%, var(--bg));
   --field: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  /* The lifted piece of a control: its thumb, its pressed step. */
+  --raised: var(--bg);
+  --knob: var(--bg);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* Shadows stay dark in dark themes; mixing in the text color would make them glow. */
-  --shade: rgb(0 0 0 / 0.18);
-  --shade: light-dark(rgb(0 0 0 / 0.16), rgb(0 0 0 / 0.55));
+  --shade: rgb(0 0 0 / 0.16);
+}
+
+/* main.ts marks dark themes. There a lifted piece is lighter than its well,
+   and a shadow has to be much heavier to show at all. */
+:root.dark {
+  --raised: color-mix(in srgb, var(--fg) 22%, var(--bg));
+  --knob: var(--fg);
+  --shade: rgb(0 0 0 / 0.55);
 }
 
 :root.live {
@@ -122,15 +132,19 @@ p {
 }
 
 .plain {
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   padding: 6px 12px;
   font-size: 13px;
-  background: transparent;
+  background: var(--field);
 }
 
 .plain:hover {
-  background: var(--wash);
+  background: color-mix(in srgb, var(--fg) 11%, var(--bg));
+}
+
+.plain:active {
+  transform: scale(0.96);
 }
 
 .note {
@@ -148,20 +162,33 @@ textarea {
   /* A soft fill with no drawn edge; the edge only appears with focus. */
   border: 1px solid transparent;
   border-radius: 9px;
-  background: var(--field);
+  background-color: var(--field);
   padding: 8px 11px;
   outline: none;
   transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 :is(input[type="text"], input[type="password"], input:not([type]), select, textarea):hover {
-  background: color-mix(in srgb, var(--fg) 10%, var(--bg));
+  background-color: color-mix(in srgb, var(--fg) 10%, var(--bg));
 }
 
 :is(input[type="text"], input[type="password"], input:not([type]), select, textarea):focus-visible {
-  background: var(--bg);
+  background-color: var(--bg);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* The browser's own arrow is a box of its own; this one is two small triangles
+   in the text color. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 /* ------------------------------------------------------------ sign in */
@@ -612,7 +639,7 @@ textarea {
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 18px 50px -12px var(--shade), 0 2px 6px var(--shade);
   opacity: 0;
   transform: translateX(calc(100% + 24px));
@@ -639,33 +666,78 @@ textarea {
   background: transparent;
 }
 
+/* A slim scrollbar in the page's own colors instead of the system's grey slab. */
+.panel::-webkit-scrollbar {
+  width: 11px;
+}
+
+.panel::-webkit-scrollbar-track {
+  margin: 14px 0;
+  background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  background-clip: padding-box;
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .panel {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--fg) 24%, transparent) transparent;
+  }
+}
+
+/* Nothing in the panel is an outlined box. Controls are soft wells with one
+   lifted piece; sections are set apart by space and their headings. */
 .panel-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 18px;
+  padding: 16px 14px 6px 20px;
   background: var(--bg);
 }
 
+/* What scrolls under the heading fades out instead of being cut by a line. */
+.panel-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 14px;
+  background: linear-gradient(var(--bg), transparent);
+  pointer-events: none;
+}
+
 .panel-head h2 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.panel-head .tool {
+  margin: 0;
 }
 
 .panel section {
   display: grid;
   gap: 10px;
-  padding: 16px 18px;
-  border-top: 1px solid var(--line);
+  padding: 16px 20px 8px;
 }
 
 .panel section > h2 {
+  margin-bottom: 2px;
   font-size: 13px;
-  font-weight: 600;
-  color: var(--dim);
+  font-weight: 650;
 }
 
 .themes {
@@ -673,8 +745,13 @@ textarea {
   gap: 10px;
 }
 
+.themes .segs {
+  display: grid;
+  justify-self: stretch;
+}
+
 .themes h3 {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 12px;
   font-weight: 500;
   color: var(--dim);
@@ -683,7 +760,7 @@ textarea {
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px 12px;
 }
 
 .tile-wrap {
@@ -691,66 +768,124 @@ textarea {
   display: grid;
 }
 
+/* A theme is a scrap of terminal in its own colors with its name underneath.
+   The chosen one wears a ring in the accent. */
 .tile {
   display: grid;
+  gap: 6px;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 10px;
-  background: transparent;
+  background: none;
   text-align: left;
-  outline: 2px solid transparent;
-  outline-offset: 1px;
-  transition: outline-color 0.15s ease, border-color 0.15s ease, transform 0.12s var(--ease);
-}
-
-.tile:hover {
-  border-color: color-mix(in srgb, var(--fg) 34%, var(--bg));
-}
-
-.tile:active {
-  transform: scale(0.97);
-}
-
-.tile[aria-pressed="true"] {
-  outline-color: var(--accent);
 }
 
 .tile-sample {
   display: grid;
-  padding: 9px 10px;
+  padding: 10px 11px;
   overflow: hidden;
+  border-radius: 10px;
   font-family: var(--mono);
   font-size: 10.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s ease;
+}
+
+@media (hover: hover) {
+  .tile:hover .tile-sample {
+    transform: translateY(-2px);
+  }
+}
+
+.tile:active .tile-sample {
+  transform: scale(0.97);
+}
+
+.tile[aria-pressed="true"] .tile-sample {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
 .tile-name {
-  padding: 5px 10px 6px;
-  border-top: 1px solid var(--line);
+  padding: 0 2px;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 12.5px;
+  color: var(--dim);
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.tile[aria-pressed="true"] .tile-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.tile[aria-pressed="true"] .tile-name::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+  animation: pop 0.32s var(--ease);
 }
 
 .tile-remove {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
   width: 22px;
   height: 22px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 50%;
   background: var(--bg);
   line-height: 1;
+  box-shadow: 0 1px 3px var(--shade);
+  opacity: 0;
+}
+
+.tile-wrap:hover .tile-remove,
+.tile-remove:focus-visible {
+  opacity: 1;
 }
 
 .import summary {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
   font-size: 13px;
   color: var(--dim);
   cursor: pointer;
+  list-style: none;
+  transition: color 0.12s ease;
+}
+
+.import summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A plus that turns into a cross once the importer is open. */
+.import summary::before {
+  content: "+";
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.22s var(--ease);
+}
+
+.import[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.import summary:hover {
+  color: var(--fg);
 }
 
 .import[open] {
@@ -773,7 +908,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 34px;
+  min-height: 36px;
 }
 
 .row select {
@@ -784,66 +919,93 @@ textarea {
   min-width: 0;
 }
 
-/* Equal columns with one thumb behind them; settings.ts says how many options
-   there are (--n) and which is chosen (--i), and the thumb slides between. */
+/* Equal columns in a well, with one lifted thumb behind the chosen option;
+   settings.ts says how many options there are (--n) and which is chosen (--i). */
 .segs {
   position: relative;
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--field);
   justify-self: start;
 }
 
 .segs::before {
   content: "";
   position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 2px;
-  width: calc((100% - 4px) / var(--n, 1));
-  border-radius: 6px;
-  background: var(--fg);
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--n, 1));
+  border-radius: 7px;
+  background: var(--raised);
+  box-shadow: 0 1px 3px var(--shade);
   transform: translateX(calc(var(--i, 0) * 100%));
-  transition: transform 0.22s var(--ease);
+  transition: transform 0.24s var(--ease);
 }
 
 .seg {
   position: relative;
   border: 0;
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: 7px;
+  padding: 5px 14px;
   font-size: 13px;
   color: var(--dim);
   background: transparent;
   white-space: nowrap;
 }
 
+.seg:hover,
 .seg[aria-pressed="true"] {
-  color: var(--bg);
+  color: var(--fg);
+}
+
+/* The cursor choices show the cursor they give. */
+.seg[data-value="block"]::before,
+.seg[data-value="bar"]::before,
+.seg[data-value="underline"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-right: 7px;
+  background: currentColor;
+  vertical-align: -0.16em;
+}
+
+.seg[data-value="bar"]::before {
+  width: 2px;
+}
+
+.seg[data-value="underline"]::before {
+  height: 2px;
 }
 
 .stepper {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--field);
 }
 
 .step {
-  width: 32px;
-  height: 30px;
+  width: 30px;
+  height: 28px;
   border: 0;
   border-radius: 7px;
   background: transparent;
+  color: var(--dim);
   font-size: 16px;
   line-height: 1;
 }
 
 .step:hover {
-  background: var(--wash);
+  color: var(--fg);
+  background: var(--raised);
+  box-shadow: 0 1px 3px var(--shade);
 }
 
 .step:active {
@@ -870,9 +1032,9 @@ textarea {
   appearance: none;
   -webkit-appearance: none;
   border-radius: 11px;
-  background: var(--line);
+  background: color-mix(in srgb, var(--fg) 22%, var(--bg));
   cursor: pointer;
-  transition: background 0.18s ease;
+  transition: background-color 0.2s ease;
 }
 
 .switch input::after {
@@ -883,8 +1045,14 @@ textarea {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--bg);
-  transition: transform 0.2s var(--ease);
+  background: var(--knob);
+  box-shadow: 0 1px 2px var(--shade);
+  transition: transform 0.22s var(--ease), width 0.22s var(--ease);
+}
+
+/* The knob stretches a little while it is held, then lets go to the other side. */
+.switch input:active::after {
+  width: 23px;
 }
 
 .switch input:checked {
@@ -895,10 +1063,17 @@ textarea {
   transform: translateX(16px);
 }
 
+.switch input:checked:active::after {
+  transform: translateX(11px);
+}
+
 .panel .account {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-top: 10px;
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--line);
   color: var(--dim);
   font-size: 13px;
 }
@@ -906,7 +1081,8 @@ textarea {
 /* Phones: the strip stays one row, close buttons are always there to tap, and
    settings rise from the bottom so the terminal above still shows the result. */
 @media (max-width: 600px), (pointer: coarse) {
-  .tab-close {
+  .tab-close,
+  .tile-remove {
     opacity: 1;
   }
 }

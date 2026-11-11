@@ -30,6 +30,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - 安全策略是 `font-src 'self'`，所以 Vite 不内联任何资源（`assetsInlineLimit: 0`）。
 - 界面文案不加标点，中英文都要补。
 - 选中标签的底板是标签栏里单独的一个节点（`.tab-ink`），位置由 `main.ts` 的 `placeInk` 按选中标签量出来：重绘标签时滑过去，标签只是变宽时直接跟上。动效只回应用户操作，`prefers-reduced-motion` 下全部关闭。
+- 控件不画描边方框：凹槽用 `--field`，里面抬起的那一块用 `--raised`。深浅主题的差异写在 `:root.dark` 里（`paintChrome` 打标），不用 `light-dark()`：带 `var()` 的声明在旧浏览器里没有回退，会整条失效。
 - 控件不要随状态更新整块重建。重命名失焦保存不得抢走下一次点击的焦点。按键栏修饰键只处理用户输入，不处理终端的查询应答。
 - 只改了客户端：`npm run build` 后 reload 服务即可，不会断开已有 shell。改了服务端要 restart，会结束所有 shell。
 

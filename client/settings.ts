@@ -1,5 +1,5 @@
 // What the person has chosen, kept in this browser, and the panel that edits it.
-import { h, recall, reconcile, remember } from "./dom.ts";
+import { h, icon, recall, reconcile, remember } from "./dom.ts";
 import { LANGUAGE_KEY, t, type Language } from "./i18n.ts";
 import { importTheme, isTheme, THEMES, type Theme } from "./themes.ts";
 
@@ -133,7 +133,7 @@ function segmented<T extends string>(label: string, options: [T, string][], curr
     h("button", {
       class: "seg",
       text,
-      attrs: { type: "button", "aria-pressed": String(current() === value) },
+      attrs: { type: "button", "data-value": value, "aria-pressed": String(current() === value) },
       on: { click: () => choose(value) },
     }),
   );
@@ -323,7 +323,7 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
       "div",
       { class: "panel-head" },
       h("h2", { text: t("settings") }),
-      h("button", { class: "plain", text: t("done"), attrs: { type: "button" }, on: { click: actions.close } }),
+      h("button", { class: "tool", attrs: { type: "button", "aria-label": t("done"), title: t("done") }, on: { click: actions.close } }, icon("close")),
     ),
     h("section", {}, h("h2", { text: t("theme") }), themeArea, importer),
     h(

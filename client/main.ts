@@ -101,6 +101,7 @@ function paintChrome() {
   root.style.setProperty("--bad", theme.ansi[1]!);
   root.style.setProperty("--mono", fontFamily());
   root.style.colorScheme = theme.dark ? "dark" : "light";
+  root.classList.toggle("dark", theme.dark);
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.background);
 }
 
