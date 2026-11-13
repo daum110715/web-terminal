@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { h } from "./dom.ts";
+import { TextInput } from "./ime.ts";
 import { activeTheme, contrastRatio, fontFamily, primaryFont, settings } from "./settings.ts";
 import { toXterm } from "./themes.ts";
 import { TouchScroll } from "./touch-scroll.ts";
@@ -145,9 +146,7 @@ export class Shell {
       queueMicrotask(() => (keyboardData = null));
     };
     term.onKey(({ key }) => typed(key));
-    term.textarea?.addEventListener("input", (event) => {
-      if (event instanceof InputEvent && event.data) typed(event.data);
-    }, { capture: true });
+    new TextInput(term, this.mount, (data, keyboard) => this.send(keyboard ? this.host.transform(data) : data));
     term.onData((data) => {
       // Focus and color reports are terminal replies, not the next latched key.
       const keyboard = keyboardData === data;

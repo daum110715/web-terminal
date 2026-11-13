@@ -560,6 +560,26 @@ select {
   overscroll-behavior: contain;
 }
 
+/* Input method preview: wraps like terminal text, starting at the cursor. */
+.ime {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 9;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+}
+
+.ime span {
+  background: var(--bg);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .empty {
   height: 100%;
   display: grid;

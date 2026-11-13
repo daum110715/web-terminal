@@ -16,6 +16,7 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `server/terminal.ts` shell 会话。每个会话有一份无头 xterm 镜像，浏览器接入时发一帧 JSON 快照（屏幕、回滚、光标、模式），之后才是二进制实时输出。不要退回成原始字节回放：那会从转义序列中间开始、丢掉备用屏和鼠标模式，还会让旧的查询序列被重复应答。
 - `server/app.ts` 登录、终端列表、静态资源。`server/auth.ts` scrypt 密码和签名 cookie。
 - `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。标签切到后台时不销毁，也不参与尺寸计算。
+- `client/ime.ts` 输入法、语音输入、手机键盘这类经 textarea 进来的文字。xterm 自带的几条路径（组字结束、insertText、keydown 229 后的差分）在部分输入法下会把同一段话各发一次，所以全部拦下，只按 textarea 相对上次发送的增删发一次。组字预览也在这里，会换行。
 - `client/touch-scroll.ts` 单指拖动和惯性滚动。普通 shell 滚动本地历史，全屏程序沿用 xterm 的滚轮处理，保留鼠标编码和方向键模式。
 - `client/themes.ts` 主题。调色板必须如实：黑是深色、白是浅色，浅色主题也一样。可读性靠 `minimumContrastRatio`，不靠把颜色对调。
 - `client/settings.ts` 设置的存取和原生 dialog 面板。`client/i18n.ts` 中英文案。
