@@ -560,6 +560,15 @@ select {
   overscroll-behavior: contain;
 }
 
+/* Holding Alt puts xterm in column-select mode with a crosshair pointer. Voice
+   input on Alt+Q trips it every time, so keep the usual pointer. */
+.term .xterm.column-select.focus {
+  cursor: text;
+}
+.term .xterm.enable-mouse-events.column-select.focus {
+  cursor: default;
+}
+
 /* Input method preview: wraps like terminal text, starting at the cursor. */
 .ime {
   position: absolute;
