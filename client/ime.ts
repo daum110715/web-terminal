@@ -17,11 +17,17 @@ const DEL = "\x7f";
  *
  * xterm's composition view stays on one line and runs off the screen; the
  * preview here wraps like terminal text does, starting at the cursor.
+ *
+ * Space, capital letters and dead keys are the exception: xterm sends them from
+ * its keypress handler and leaves the browser to type them into the textarea as
+ * well, so that insertion is only recorded here, not sent again.
  */
 export class TextInput {
   /** Textarea content the shell has already received. */
   private sent = "";
   private composing = false;
+  /** The key xterm just sent from a keypress, until the textarea catches up with it. */
+  private keyed: string | null = null;
   private readonly preview = h("div", { class: "ime", attrs: { "aria-hidden": "true" } });
   private readonly text = h("span");
 
@@ -40,6 +46,10 @@ export class TextInput {
       mount.addEventListener(type, (event) => {
         if (event.target === term.textarea) listener(event);
       }, { capture: true });
+
+    term.onKey(({ key, domEvent }) => {
+      if (domEvent.type === "keypress") this.keyed = key;
+    });
 
     on("compositionstart", (event) => {
       event.stopPropagation();
@@ -66,11 +76,16 @@ export class TextInput {
       event.stopPropagation();
       if (this.composing || (event instanceof InputEvent && event.isComposing)) return;
       const type = event instanceof InputEvent ? event.inputType : "";
+      const keyed = this.keyed;
+      this.keyed = null;
       // xterm's paste handler already sent it.
       if (type === "insertFromPaste" || type === "insertFromDrop") this.adopt();
+      // So did its keypress handler.
+      else if (type === "insertText" && keyed !== null && (event as InputEvent).data === keyed) this.adopt();
       else this.flush();
     });
     on("keydown", (event) => {
+      this.keyed = null;
       // Keys the input method is handling are its business, not keys to send.
       if (event.isComposing || event.keyCode === 229) {
         event.stopPropagation();
