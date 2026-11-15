@@ -17,9 +17,6 @@ const DEL = "\x7f";
  *
  * xterm's composition view stays on one line and runs off the screen; the
  * preview here wraps like terminal text does, starting at the cursor.
- *
- * Space and other keys xterm defers to its legacy keypress handler stay off that
- * path (`Shell.handleKey`), so the textarea is their sole source too.
  */
 export class TextInput {
   /** Textarea content the shell has already received. */
@@ -44,11 +41,6 @@ export class TextInput {
         if (event.target === term.textarea) listener(event);
       }, { capture: true });
 
-    on("blur", () => {
-      this.composing = false;
-      this.preview.hidden = true;
-      this.sent = "";
-    });
     on("compositionstart", (event) => {
       event.stopPropagation();
       if (!this.composing) this.adopt();
@@ -63,7 +55,7 @@ export class TextInput {
       event.stopPropagation();
       this.composing = false;
       this.preview.hidden = true;
-      this.flush(true);
+      this.flush();
     });
     on("beforeinput", (event) => {
       // Anything changed without an input event (xterm clears the textarea on
@@ -76,7 +68,7 @@ export class TextInput {
       const type = event instanceof InputEvent ? event.inputType : "";
       // xterm's paste handler already sent it.
       if (type === "insertFromPaste" || type === "insertFromDrop") this.adopt();
-      else this.flush(type.startsWith("delete"));
+      else this.flush();
     });
     on("keydown", (event) => {
       // Keys the input method is handling are its business, not keys to send.
@@ -85,7 +77,7 @@ export class TextInput {
         return;
       }
       // Committed text goes out before the key that follows it, Enter included.
-      if (!this.composing) this.flush(false);
+      if (!this.composing) this.flush();
     });
   }
 
@@ -93,18 +85,10 @@ export class TextInput {
     this.sent = this.term.textarea?.value ?? "";
   }
 
-  private flush(allowDelete: boolean) {
+  private flush() {
     const value = this.term.textarea?.value ?? "";
     const sent = this.sent;
     if (value === sent) return;
-    // xterm empties the textarea by itself for Enter and Ctrl+C and no input
-    // event reports it; a non-delete shrink that no longer extends what was sent
-    // is a fresh start, not text to remove with backspaces.
-    if (!allowDelete && value.length < sent.length) {
-      this.sent = value;
-      if (value) this.emit(value, true);
-      return;
-    }
     let same = 0;
     const shorter = Math.min(value.length, sent.length);
     while (same < shorter && value[same] === sent[same]) same++;
