@@ -185,6 +185,13 @@ export class Shell {
   /** Returns false for keys the terminal must not handle itself. */
   private handleKey(event: KeyboardEvent): boolean {
     const plain = !event.ctrlKey && !event.altKey && !event.metaKey;
+    // Space (keyCode < 48), uppercase A-Z, and dead/AltGr keys skip xterm's
+    // keydown handler and fall through to its legacy keypress handler, which
+    // does not preventDefault() when cancelEvents is false. The browser still
+    // inserts the character into the textarea, so TextInput would send it a
+    // second time. Leave Space and legacy keypresses to TextInput alone.
+    if (event.key === " " && plain) return false;
+    if (event.type === "keypress" && (plain || event.getModifierState?.("AltGraph"))) return false;
     // Shift+Enter is a line break in most chat-style programs; plain terminals send the same as Enter.
     if (event.key === "Enter" && event.shiftKey && plain) {
       if (event.type === "keydown") {
