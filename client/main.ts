@@ -292,6 +292,25 @@ async function showConsole(name: string) {
   consoleEl = root;
   app.replaceChildren(root);
 
+  // If focus sits on the page frame (e.g. returning from Win+V) instead of the
+  // terminal's textarea, forward non-dialog pastes to the active shell anyway.
+  document.addEventListener(
+    "paste",
+    (event) => {
+      const shell = current();
+      if (!shell || panel.open || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable]")) return;
+      if (target instanceof Node && shell.term.element?.contains(target)) return;
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+      shell.paste(text);
+      shell.focus();
+    },
+    { signal: panelEvents.signal },
+  );
+
   await fontsReady();
   try {
     await refresh();

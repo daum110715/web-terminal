@@ -28,6 +28,8 @@ export class TextInput {
   private composing = false;
   /** The key xterm just sent from a keypress, until the textarea catches up with it. */
   private keyed: string | null = null;
+  /** Normalized text from a DOM paste event while waiting for its matching input event. */
+  private pasted: string | null = null;
   private readonly preview = h("div", { class: "ime", attrs: { "aria-hidden": "true" } });
   private readonly text = h("span");
 
@@ -48,11 +50,31 @@ export class TextInput {
       }, { capture: true });
 
     term.onKey(({ key, domEvent }) => {
-      if (domEvent.type === "keypress") this.keyed = key;
+      // xterm clears the textarea on Enter and Ctrl+C without firing an input event.
+      if (key === "\r" || key === "\x03") this.sent = "";
+      else if (domEvent.type === "keypress") this.keyed = key;
     });
 
+    on("focus", () => {
+      if (!this.composing) this.adopt();
+    });
+    on("blur", () => {
+      this.composing = false;
+      this.keyed = null;
+      this.pasted = null;
+      this.sent = "";
+      this.show("");
+    });
+    on("paste", (event) => {
+      if (!event.clipboardData) return;
+      // xterm's paste handler runs next, sends text/plain if any, and empties the textarea.
+      this.sent = "";
+      const text = event.clipboardData.getData("text/plain");
+      this.pasted = text ? text.replace(/\r\n?/g, "\n") : null;
+    });
     on("compositionstart", (event) => {
       event.stopPropagation();
+      this.pasted = null;
       if (!this.composing) this.adopt();
       this.composing = true;
       this.show("");
@@ -68,6 +90,8 @@ export class TextInput {
       this.flush();
     });
     on("beforeinput", (event) => {
+      const type = event instanceof InputEvent ? event.inputType : "";
+      if (type !== "insertFromPaste" && type !== "insertFromDrop") this.pasted = null;
       // Anything changed without an input event (xterm clears the textarea on
       // Enter, Ctrl+C, paste and blur) is a fresh start, not text to delete.
       if (!this.composing && !event.isComposing) this.adopt();
@@ -77,15 +101,29 @@ export class TextInput {
       if (this.composing || (event instanceof InputEvent && event.isComposing)) return;
       const type = event instanceof InputEvent ? event.inputType : "";
       const keyed = this.keyed;
+      const pasted = this.pasted;
       this.keyed = null;
-      // xterm's paste handler already sent it.
-      if (type === "insertFromPaste" || type === "insertFromDrop") this.adopt();
-      // So did its keypress handler.
-      else if (type === "insertText" && keyed !== null && (event as InputEvent).data === keyed) this.adopt();
-      else this.flush();
+      this.pasted = null;
+      if (type === "insertFromPaste" || type === "insertFromDrop") {
+        // xterm only handles DOM paste events; OS paste paths that insert straight
+        // into the textarea (such as TSF / Win+V) bypass paste and arrive here.
+        const change = this.diff();
+        if (!change) return;
+        if (pasted !== null && change.removed === 0 && change.added.replace(/\r\n?/g, "\n") === pasted) {
+          this.sent = change.value;
+        } else {
+          this.flushPaste(change);
+        }
+      } else if (type === "insertText" && keyed !== null && (event as InputEvent).data === keyed) {
+        // Already sent by xterm's keypress handler.
+        this.adopt();
+      } else {
+        this.flush();
+      }
     });
     on("keydown", (event) => {
       this.keyed = null;
+      this.pasted = null;
       // Keys the input method is handling are its business, not keys to send.
       if (event.isComposing || event.keyCode === 229) {
         event.stopPropagation();
@@ -100,20 +138,34 @@ export class TextInput {
     this.sent = this.term.textarea?.value ?? "";
   }
 
-  private flush() {
+  private diff() {
     const value = this.term.textarea?.value ?? "";
     const sent = this.sent;
-    if (value === sent) return;
+    if (value === sent) return null;
     let same = 0;
     const shorter = Math.min(value.length, sent.length);
     while (same < shorter && value[same] === sent[same]) same++;
     // Never split a surrogate pair.
     if (same > 0 && /[\uD800-\uDBFF]/.test(sent[same - 1]!)) same--;
-    this.sent = value;
-    const removed = [...sent.slice(same)].length;
-    const added = value.slice(same).replace(/\r?\n/g, "\r");
-    if (removed) this.emit(DEL.repeat(removed), false);
-    if (added) this.emit(added, true);
+    return { value, removed: [...sent.slice(same)].length, added: value.slice(same) };
+  }
+
+  private flush() {
+    const change = this.diff();
+    if (!change) return;
+    this.sent = change.value;
+    if (change.removed) this.emit(DEL.repeat(change.removed), false);
+    if (change.added) this.emit(change.added.replace(/\r?\n/g, "\r"), true);
+  }
+
+  private flushPaste(change: { value: string; removed: number; added: string }) {
+    if (change.removed) this.emit(DEL.repeat(change.removed), false);
+    if (change.added) {
+      this.term.paste(change.added);
+      this.sent = "";
+    } else {
+      this.sent = change.value;
+    }
   }
 
   private show(text: string) {

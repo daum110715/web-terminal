@@ -28,6 +28,8 @@ export interface ShellHost {
 }
 
 const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+const matchesKey = (event: KeyboardEvent, code: string, letter: string, keyCode: number) =>
+  event.code === code || event.key.toLowerCase() === letter || event.keyCode === keyCode;
 const encoder = new TextEncoder();
 const shells = new Set<Shell>();
 
@@ -195,9 +197,10 @@ export class Shell {
     }
     if (IS_MAC || !event.ctrlKey || event.altKey || event.metaKey) return true;
     // Ctrl+V would arrive as a literal ^V; leave it to the browser, which fires a real paste.
-    if (event.code === "KeyV") return false;
+    // Synthetic shortcuts (such as Windows Win+V clipboard history) may omit `code`.
+    if (matchesKey(event, "KeyV", "v", 86)) return false;
     // Ctrl+C copies when text is selected and interrupts otherwise; Ctrl+Shift+C always copies.
-    if (event.code === "KeyC" && (event.shiftKey || this.term.hasSelection())) {
+    if (matchesKey(event, "KeyC", "c", 67) && (event.shiftKey || this.term.hasSelection())) {
       if (event.type === "keydown") {
         event.preventDefault();
         const text = this.term.getSelection();
