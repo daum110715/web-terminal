@@ -307,24 +307,26 @@ select {
   transition: transform 0.22s var(--ease), width 0.22s var(--ease);
 }
 
-/* The two feet that curve the surface out into the terminal below. */
+/* The two feet that curve the surface out into the terminal below. Overlap 1px
+   into the tab and fade to transparent inside the box so the 1px hairline at
+   the bottom is never clipped mid-feather. */
 .tab-ink::before,
 .tab-ink::after {
   content: "";
   position: absolute;
   bottom: 0;
-  width: 9px;
+  width: 11px;
   height: 9px;
 }
 
 .tab-ink::before {
-  right: 100%;
-  background: radial-gradient(circle at 0 0, transparent 8.5px, var(--bg) 9px);
+  right: calc(100% - 1px);
+  background: radial-gradient(circle at 0 0, transparent 9px, var(--bg) 9.45px);
 }
 
 .tab-ink::after {
-  left: 100%;
-  background: radial-gradient(circle at 100% 0, transparent 8.5px, var(--bg) 9px);
+  left: calc(100% - 1px);
+  background: radial-gradient(circle at 100% 0, transparent 9px, var(--bg) 9.45px);
 }
 
 .tab {
