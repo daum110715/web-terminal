@@ -27,10 +27,11 @@ const sockets = new WebSocketServer({ noServer: true, perMessageDeflate: false, 
 server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   const refuse = (status: string) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   if (!sameOrigin(req.headers.origin, req.headers.host)) return refuse("403 Forbidden");
-  if (!auth.verify(Auth.read(req.headers.cookie))) return refuse("401 Unauthorized");
+  const session = auth.verify(Auth.read(req.headers.cookie));
+  if (!session) return refuse("401 Unauthorized");
   const match = /^\/ws\/terminals\/([a-f0-9]{24})$/.exec(new URL(req.url ?? "/", "http://localhost").pathname);
   if (!match) return refuse("404 Not Found");
-  sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws));
+  sockets.handleUpgrade(req, socket, head, (ws) => terminals.attach(match[1]!, ws, session.username));
 });
 
 // A rebuilt client is picked up without ending the shells: `systemctl --user reload`.

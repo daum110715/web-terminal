@@ -2,6 +2,7 @@
 // its own headless copy of each screen, so whoever attaches next gets a clean
 // snapshot (screen, scrollback, cursor and modes) instead of a raw byte replay
 // that could start mid-sequence or miss the modes a full-screen program set.
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import pty, { type IPty } from "node-pty";
@@ -26,6 +27,33 @@ export interface TerminalOptions {
   rows?: number;
   /** Whether the viewer's theme is dark; programs read it from COLORFGBG. */
   dark?: boolean;
+  /** Target OS user to spawn the login shell as via non-interactive sudo. */
+  systemUser?: string;
+}
+
+export interface SystemUserInfo {
+  username: string;
+  homedir: string;
+  shell: string;
+}
+
+const SYSTEM_USER_RE = /^[a-z_][a-z0-9_-]*[$]?$/;
+
+export function resolveSystemUser(username: string): SystemUserInfo {
+  if (!SYSTEM_USER_RE.test(username)) throw new HttpError(400, "Invalid system user");
+  let entry = "";
+  try {
+    entry = execFileSync("getent", ["passwd", username], { encoding: "utf8" }).trim();
+  } catch {
+    throw new HttpError(500, `System user "${username}" does not exist`);
+  }
+  const fields = entry.split(":");
+  if (fields.length < 7) throw new HttpError(500, `System user "${username}" could not be resolved`);
+  return {
+    username: fields[0] || username,
+    homedir: fields[5] || "/",
+    shell: fields[6] || "/bin/bash",
+  };
 }
 
 const SCROLLBACK_LINES = 10_000;
@@ -48,6 +76,8 @@ const clampRows = (rows: number) => Math.max(4, Math.min(200, Math.floor(rows)))
 
 interface Session {
   id: string;
+  owner: string;
+  fallbackTitle: string;
   process: IPty;
   screen: Screen;
   serializer: Serializer;
@@ -82,6 +112,52 @@ export function shellEnv(base: NodeJS.ProcessEnv, dark: boolean): Record<string,
   return env;
 }
 
+/** Isolated environment when spawning a login shell as another system user. */
+export function targetShellEnv(target: SystemUserInfo, dark: boolean, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const inheritedLang = /utf-?8/i.test(base.LANG || "") ? base.LANG! : "C.UTF-8";
+  return {
+    HOME: target.homedir,
+    USER: target.username,
+    LOGNAME: target.username,
+    SHELL: target.shell,
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    TERM_PROGRAM: "web-terminal",
+    COLORFGBG: dark ? "15;0" : "0;15",
+    LANG: inheritedLang,
+    LC_CTYPE: inheritedLang,
+  };
+}
+
+function spawnShell(cols: number, rows: number, options: TerminalOptions): { child: IPty; fallbackTitle: string } {
+  const currentUser = os.userInfo().username;
+  if (!options.systemUser || options.systemUser === currentUser) {
+    const child = pty.spawn(process.env.SHELL || "/bin/bash", ["-l"], {
+      name: "xterm-256color",
+      cols,
+      rows,
+      cwd: os.homedir(),
+      env: shellEnv(process.env, options.dark ?? false),
+    });
+    return { child, fallbackTitle: "" };
+  }
+  const target = resolveSystemUser(options.systemUser);
+  const envArgs = Object.entries(targetShellEnv(target, options.dark ?? false)).map(([k, v]) => `${k}=${v}`);
+  const child = pty.spawn(
+    "sudo",
+    ["-n", "-u", target.username, "env", "-i", ...envArgs, "/bin/sh", "-c", 'cd "$HOME" && exec "$SHELL" -l'],
+    {
+      name: "xterm-256color",
+      cols,
+      rows,
+      // Current service user may not have traverse permission on target's private home directory.
+      cwd: "/",
+    },
+  );
+  return { child, fallbackTitle: target.username };
+}
+
 export class Terminals {
   private readonly sessions = new Map<string, Session>();
   private readonly max: number;
@@ -93,28 +169,31 @@ export class Terminals {
   private info(session: Session): TerminalInfo {
     return {
       id: session.id,
-      title: session.name || session.title || session.process.process,
+      title: session.name || session.title || session.fallbackTitle || session.process.process,
       name: session.name,
       created: session.created,
       clients: session.clients.size,
     };
   }
 
-  list(): TerminalInfo[] {
-    return [...this.sessions.values()].map((session) => this.info(session));
+  private ownedSessions(owner: string): Session[] {
+    return [...this.sessions.values()].filter((session) => session.owner === owner);
   }
 
-  create(options: TerminalOptions = {}): TerminalInfo {
-    if (this.sessions.size >= this.max) throw new HttpError(409, `At most ${this.max} terminals can run at once`);
+  private ownSession(id: string, owner: string): Session | undefined {
+    const session = this.sessions.get(id);
+    return session && session.owner === owner ? session : undefined;
+  }
+
+  list(owner = "default"): TerminalInfo[] {
+    return this.ownedSessions(owner).map((session) => this.info(session));
+  }
+
+  create(options: TerminalOptions = {}, owner = "default"): TerminalInfo {
+    if (this.ownedSessions(owner).length >= this.max) throw new HttpError(409, `At most ${this.max} terminals can run at once`);
     const cols = clampCols(options.cols ?? 100);
     const rows = clampRows(options.rows ?? 30);
-    const child = pty.spawn(process.env.SHELL || "/bin/bash", ["-l"], {
-      name: "xterm-256color",
-      cols,
-      rows,
-      cwd: os.homedir(),
-      env: shellEnv(process.env, options.dark ?? false),
-    });
+    const { child, fallbackTitle } = spawnShell(cols, rows, options);
     const screen = new headless.Terminal({ cols, rows, scrollback: SCROLLBACK_LINES, allowProposedApi: true });
     const serializer = new serialize.SerializeAddon();
     screen.loadAddon(serializer);
@@ -124,6 +203,8 @@ export class Terminals {
 
     const session: Session = {
       id: randomBytes(12).toString("hex"),
+      owner,
+      fallbackTitle,
       process: child,
       screen,
       serializer,
@@ -201,16 +282,16 @@ export class Terminals {
     for (const client of session.clients) client.send(message);
   }
 
-  rename(id: string, name: string): TerminalInfo {
-    const session = this.sessions.get(id);
+  rename(id: string, name: string, owner = "default"): TerminalInfo {
+    const session = this.ownSession(id, owner);
     if (!session) throw new HttpError(404, "Terminal not found");
     session.name = name.trim().slice(0, 40);
     this.announce(session);
     return this.info(session);
   }
 
-  kill(id: string) {
-    const session = this.sessions.get(id);
+  kill(id: string, owner = "default") {
+    const session = this.ownSession(id, owner);
     if (!session) throw new HttpError(404, "Terminal not found");
     // Gone from the list at once, not when the process gets around to exiting.
     this.retire(session);
@@ -228,8 +309,8 @@ export class Terminals {
    * control messages. Server to client: one JSON "snapshot" first, then
    * binary frames of live output, with JSON "title" messages in between.
    */
-  attach(id: string, socket: WebSocket) {
-    const session = this.sessions.get(id);
+  attach(id: string, socket: WebSocket, owner = "default") {
+    const session = this.ownSession(id, owner);
     if (!session) {
       socket.close(4004, "Terminal not found");
       return;

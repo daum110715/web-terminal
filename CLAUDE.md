@@ -1,6 +1,6 @@
 # web-terminal
 
-浏览器里的终端：单账号登录，标签页对应服务器上的常驻 shell。服务端是 Node（Hono + ws + node-pty），客户端是不带框架的 TypeScript + xterm.js。用户是作者本人和朋友，会推荐给别人自己部署，所以默认体验要开箱即好。
+浏览器里的终端：多账号登录与会话隔离，可绑定对应系统用户启动常驻 shell。服务端是 Node（Hono + ws + node-pty），客户端是不带框架的 TypeScript + xterm.js。用户是作者本人和朋友，会推荐给别人自己部署，所以默认体验要开箱即好。
 
 ## 命令
 

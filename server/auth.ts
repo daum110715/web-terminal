@@ -1,6 +1,6 @@
-// Single-account authentication with a stateless signed session cookie.
-// The cookie key is derived from the stored password hash, so changing the
-// password signs every existing session out.
+// Multi-account authentication with stateless signed session cookies.
+// Each cookie is signed with a key derived from that account's password hash,
+// so changing one user's password only signs out that user's sessions.
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,10 +17,19 @@ const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 2 ** 20 };
 export const COOKIE = "wt_session";
 const MAX_AGE = 90 * 86400;
 const RENEW_BELOW = 60 * 86400;
+// Used to equalize timing when a login names an unknown user.
+const DUMMY_HASH = "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-interface Account {
+export interface Account {
   username: string;
   hash: string;
+  systemUser?: string;
+}
+
+export interface SessionIdentity {
+  username: string;
+  systemUser?: string;
+  renewed?: string;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -39,18 +48,20 @@ export async function verifyPassword(password: string, stored: string): Promise<
     p: Number(p),
     maxmem: SCRYPT.maxmem,
   });
-  return timingSafeEqual(actual, expected);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
 export class Auth {
-  private readonly accountFile: string;
+  private readonly accountsFile: string;
+  private readonly legacyAccountFile: string;
   private readonly keyFile: string;
 
   constructor(secretsDir: string) {
     fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-    this.accountFile = path.join(secretsDir, "account.json");
+    this.accountsFile = path.join(secretsDir, "accounts.json");
+    this.legacyAccountFile = path.join(secretsDir, "account.json");
     this.keyFile = path.join(secretsDir, "session.key");
     try {
       fs.writeFileSync(this.keyFile, randomBytes(32), { flag: "wx", mode: 0o600 });
@@ -60,17 +71,50 @@ export class Auth {
   }
 
   // Read on every use so `npm run passwd` applies without a restart.
-  private account(): Account | null {
+  private accounts(): Account[] {
     try {
-      return JSON.parse(fs.readFileSync(this.accountFile, "utf8")) as Account;
-    } catch {
-      return null;
-    }
+      const parsed = JSON.parse(fs.readFileSync(this.accountsFile, "utf8")) as { accounts?: Account[] } | Account[];
+      const list = Array.isArray(parsed) ? parsed : parsed.accounts;
+      if (Array.isArray(list)) return list.filter((item) => item && typeof item.username === "string" && typeof item.hash === "string");
+    } catch {}
+    try {
+      const legacy = JSON.parse(fs.readFileSync(this.legacyAccountFile, "utf8")) as Account;
+      if (legacy && typeof legacy.username === "string" && typeof legacy.hash === "string") return [legacy];
+    } catch {}
+    return [];
   }
 
-  async setAccount(username: string, password: string) {
-    const account: Account = { username, hash: await hashPassword(password) };
-    fs.writeFileSync(this.accountFile, JSON.stringify(account, null, 2) + "\n", { mode: 0o600 });
+  private findAccount(username: string): Account | null {
+    const target = digest(username);
+    let matched: Account | null = null;
+    for (const account of this.accounts()) {
+      if (timingSafeEqual(digest(account.username), target)) matched = account;
+    }
+    return matched;
+  }
+
+  listAccounts(): Array<{ username: string; systemUser?: string }> {
+    return this.accounts().map(({ username, systemUser }) => ({ username, ...(systemUser ? { systemUser } : {}) }));
+  }
+
+  async setAccount(username: string, password: string, systemUser?: string) {
+    const accounts = this.accounts();
+    const hash = await hashPassword(password);
+    const index = accounts.findIndex((item) => item.username === username);
+    const previous = index >= 0 ? accounts[index] : undefined;
+    const resolvedSystemUser = systemUser === undefined ? previous?.systemUser : systemUser || undefined;
+    const next: Account = { username, hash, ...(resolvedSystemUser ? { systemUser: resolvedSystemUser } : {}) };
+    if (index >= 0) accounts[index] = next;
+    else accounts.push(next);
+    fs.writeFileSync(this.accountsFile, JSON.stringify({ accounts }, null, 2) + "\n", { mode: 0o600 });
+  }
+
+  removeAccount(username: string): boolean {
+    const accounts = this.accounts();
+    const next = accounts.filter((item) => item.username !== username);
+    if (next.length === accounts.length) return false;
+    fs.writeFileSync(this.accountsFile, JSON.stringify({ accounts: next }, null, 2) + "\n", { mode: 0o600 });
+    return true;
   }
 
   private signingKey(account: Account): Buffer {
@@ -78,32 +122,43 @@ export class Auth {
   }
 
   async login(username: string, password: string): Promise<string | null> {
-    const account = this.account();
-    if (!account) return null;
-    const userOk = timingSafeEqual(digest(username), digest(account.username));
+    const account = this.findAccount(username);
+    if (!account) {
+      await verifyPassword(password, DUMMY_HASH);
+      return null;
+    }
     const passwordOk = await verifyPassword(password, account.hash);
-    return userOk && passwordOk ? this.issue(account) : null;
+    return passwordOk ? this.issue(account) : null;
   }
 
   private issue(account: Account, now = Date.now()): string {
-    const payload = `${Math.floor(now / 1000) + MAX_AGE}.${randomBytes(12).toString("base64url")}`;
+    const userPart = Buffer.from(account.username, "utf8").toString("base64url");
+    const payload = `${userPart}.${Math.floor(now / 1000) + MAX_AGE}.${randomBytes(12).toString("base64url")}`;
     const signature = createHmac("sha256", this.signingKey(account)).update(payload).digest("base64url");
     return `${payload}.${signature}`;
   }
 
-  /** Returns the username, plus a fresh token when the session should roll forward. */
-  verify(token: string | undefined, now = Date.now()): { username: string; renewed?: string } | null {
-    const account = this.account();
-    if (!account || !token) return null;
+  /** Returns the identity, plus a fresh token when the session should roll forward. */
+  verify(token: string | undefined, now = Date.now()): SessionIdentity | null {
+    if (!token) return null;
     const split = token.lastIndexOf(".");
     if (split < 0) return null;
     const payload = token.slice(0, split);
+    const parts = payload.split(".");
+    if (parts.length !== 3 || !parts[0]) return null;
+    const username = Buffer.from(parts[0], "base64url").toString("utf8");
+    const account = this.findAccount(username);
+    if (!account) return null;
     const expected = createHmac("sha256", this.signingKey(account)).update(payload).digest();
     const supplied = Buffer.from(token.slice(split + 1), "base64url");
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
-    const left = Number(payload.split(".")[0]) - Math.floor(now / 1000);
+    const left = Number(parts[1]) - Math.floor(now / 1000);
     if (!(left > 0)) return null;
-    return { username: account.username, ...(left < RENEW_BELOW && { renewed: this.issue(account, now) }) };
+    return {
+      username: account.username,
+      ...(account.systemUser ? { systemUser: account.systemUser } : {}),
+      ...(left < RENEW_BELOW && { renewed: this.issue(account, now) }),
+    };
   }
 
   static cookie(token: string | null, path = "/"): string {

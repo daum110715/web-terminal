@@ -18,7 +18,7 @@ export interface TermServices {
   assets: Assets;
 }
 
-type Env = { Bindings: HttpBindings; Variables: { username: string } };
+type Env = { Bindings: HttpBindings; Variables: { username: string; systemUser?: string } };
 
 const credentials = z.object({
   username: z.string().min(1).max(200),
@@ -118,22 +118,27 @@ export function createTermApp({ auth, throttle, terminals, assets }: TermService
     if (!session) throw new HttpError(401, "Sign in to continue");
     if (session.renewed) c.header("Set-Cookie", Auth.cookie(session.renewed));
     c.set("username", session.username);
+    c.set("systemUser", session.systemUser);
     await next();
   });
 
   api.get("/session", (c) => c.json({ username: c.get("username") }));
-  api.get("/terminals", (c) => c.json(terminals.list()));
+  api.get("/terminals", (c) => c.json(terminals.list(c.get("username"))));
   api.post("/terminals", async (c) => {
     const options = terminalOptions.safeParse(await c.req.json().catch(() => ({})));
-    return c.json(terminals.create(options.success ? options.data : {}));
+    const username = c.get("username");
+    const systemUser = c.get("systemUser");
+    return c.json(
+      terminals.create({ ...(options.success ? options.data : {}), ...(systemUser ? { systemUser } : {}) }, username),
+    );
   });
   api.patch("/terminals/:id", async (c) => {
     const body = terminalName.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) throw new HttpError(400, "Give the terminal a name of up to 200 characters");
-    return c.json(terminals.rename(c.req.param("id"), body.data.name));
+    return c.json(terminals.rename(c.req.param("id"), body.data.name, c.get("username")));
   });
   api.delete("/terminals/:id", (c) => {
-    terminals.kill(c.req.param("id"));
+    terminals.kill(c.req.param("id"), c.get("username"));
     return c.json({ ok: true });
   });
 
