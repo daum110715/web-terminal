@@ -447,7 +447,7 @@ async function pick(account: string) {
 function closeChooser() {
   chooseEl.hidden = true;
   const shell = current();
-  if (shell) shell.show();
+  if (shell) shell.show(!coarse.matches);
   else emptyEl.hidden = terminals.length > 0;
 }
 
@@ -505,7 +505,11 @@ function settle() {
 
 function select(id: string) {
   const changed = currentId !== id;
-  if (currentId !== id) current()?.hide();
+  const previous = changed ? current() : undefined;
+  // The keyboard goes over with the tab and is never brought up by it: on a
+  // phone, focusing pops the keyboard up, the page shrinks under it and the
+  // shell is resized and redrawn, then again when it goes down.
+  const focus = !coarse.matches || !!previous?.typing();
   currentId = id;
   marks.delete(id);
   remember(LAST, id);
@@ -516,7 +520,10 @@ function select(id: string) {
   }
   emptyEl.hidden = true;
   chooseEl.hidden = true;
-  shell.show();
+  shell.show(focus);
+  // Hidden only now, so focus passes straight from one shell to the other and a
+  // phone's keyboard stays up rather than dropping and coming back.
+  previous?.hide();
   renderTabs();
   if (changed) tabViews.get(id)?.element.scrollIntoView({ block: "nearest", inline: "nearest" });
   paintStatus();
@@ -631,6 +638,11 @@ function placeInk(glide: boolean) {
   inkEl.style.transform = `translateX(${tab.offsetLeft}px)`;
 }
 
+/** A press on a tab leaves the focus in the shell being typed in, so a phone's keyboard does not drop. */
+function keepTyping(event: Event) {
+  if (current()?.typing()) event.preventDefault();
+}
+
 function renderTabs() {
   if (!consoleEl || tabsPending) return;
   tabsPending = true;
@@ -656,6 +668,7 @@ function renderTabs() {
           class: "tab-label",
           attrs: { type: "button", role: "tab", title: t("renameHint") },
           on: {
+            mousedown: keepTyping,
             click: () => select(id),
             dblclick: () => {
               const info = terminals.find((entry) => entry.id === id);
@@ -665,7 +678,7 @@ function renderTabs() {
         }, badge, text);
         const close = h("button", {
           class: "tab-close", attrs: { type: "button" },
-          on: { click: () => void end(id) },
+          on: { mousedown: keepTyping, click: () => void end(id) },
         }, icon("close"), h("span", { class: "tab-ask" }, h("span", { text: t("confirmClose") })));
         view = { element: h("div", { class: "tab", attrs: { "data-terminal": id } }, label, close), label, badge, text, close };
         tabViews.set(id, view);

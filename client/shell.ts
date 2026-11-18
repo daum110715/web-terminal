@@ -259,12 +259,18 @@ export class Shell {
     this.term.focus();
   }
 
-  show() {
+  /** Whether typing goes here now; on a phone, its keyboard is up. */
+  typing() {
+    return !!this.term.textarea && document.activeElement === this.term.textarea;
+  }
+
+  /** focus: give it the keyboard too (on a phone that brings the keyboard up). */
+  show(focus = true) {
     this.visible = true;
     this.activity.shown(true);
     this.mount.hidden = false;
     this.fitAndSend();
-    this.term.focus();
+    if (focus) this.term.focus();
   }
 
   hide() {
