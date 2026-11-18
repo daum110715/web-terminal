@@ -646,6 +646,66 @@ select {
   color: var(--dim);
 }
 
+/* Picking the account for a new terminal: a groove of names, the focused one raised. */
+.choose {
+  gap: 18px;
+  padding: 0 16px;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--field);
+}
+
+.choice {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-width: 132px;
+  padding: 18px 22px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s var(--ease);
+}
+
+.choice:hover,
+.choice:focus {
+  background: var(--raised);
+}
+
+.choice:active {
+  transform: scale(0.97);
+}
+
+.choice:disabled {
+  cursor: progress;
+}
+
+.choice-key {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.choice-name {
+  font-size: 18px;
+}
+
+.choose .hint {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+}
+
 .keys {
   flex: none;
   display: flex;

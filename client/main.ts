@@ -83,6 +83,9 @@ let consoleEl: HTMLElement | null = null;
 let tabsEl: HTMLElement;
 let stageEl: HTMLElement;
 let emptyEl: HTMLElement;
+/** Fills the stage when + is pressed while signed in to more than one account. */
+let chooseEl: HTMLElement;
+let choicesEl: HTMLElement;
 let statusEl: HTMLElement;
 let keysEl: HTMLElement;
 let newButton: HTMLButtonElement;
@@ -286,10 +289,10 @@ async function showConsole(me: SessionInfo) {
   inkEl.hidden = true;
   newButton = h("button", {
     class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") },
-    on: { click: () => void create(currentAccount()) },
+    on: { click: openNew },
   }, icon("plus"));
   tabsEl.append(inkEl, newButton);
-  openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } });
+  openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: openNew } });
   emptyEl = h(
     "div",
     { class: "empty" },
@@ -297,7 +300,16 @@ async function showConsole(me: SessionInfo) {
     openButton,
   );
   emptyEl.hidden = true;
-  stageEl = h("div", { class: "stage" }, emptyEl);
+  choicesEl = h("div", { class: "choices", attrs: { role: "group", "aria-label": t("chooseAccount") } });
+  chooseEl = h(
+    "div",
+    { class: "empty choose", on: { keydown: (event) => chooseKey(event as KeyboardEvent) } },
+    h("p", { text: t("chooseAccount") }),
+    choicesEl,
+    h("p", { class: "hint" }, h("span", { text: t("chooseByNumber") }), h("span", { text: t("chooseBack") })),
+  );
+  chooseEl.hidden = true;
+  stageEl = h("div", { class: "stage" }, emptyEl, chooseEl);
   statusEl = h("span", { class: "status", attrs: { role: "status" } }, h("i", { class: "dot" }), h("span", {}));
   keysEl = buildKeyBar({
     send: (data) => current()?.key(data),
@@ -404,6 +416,61 @@ function current(): Shell | undefined {
   return currentId ? shells.get(currentId) : undefined;
 }
 
+/**
+ * + opens a shell for the only account, or fills the stage with the signed-in
+ * accounts to pick from, the open tab's account first in focus.
+ */
+function openNew() {
+  if (accounts.length < 2) return void create(currentAccount());
+  current()?.hide();
+  emptyEl.hidden = true;
+  const buttons = accounts.map((account, index) =>
+    h(
+      "button",
+      { class: "choice", attrs: { type: "button", title: t("openAs", { name: account }) }, on: { click: () => void pick(account) } },
+      h("span", { class: "choice-key", text: String(index + 1) }),
+      h("span", { class: "choice-name", text: account }),
+    ),
+  );
+  choicesEl.replaceChildren(...buttons);
+  chooseEl.hidden = false;
+  buttons[Math.max(0, accounts.indexOf(currentAccount() ?? ""))]?.focus();
+}
+
+async function pick(account: string) {
+  for (const button of choicesEl.querySelectorAll("button")) button.disabled = true;
+  await create(account);
+  // Still showing means the shell could not be made: go back to where we were.
+  if (!chooseEl.hidden) closeChooser();
+}
+
+function closeChooser() {
+  chooseEl.hidden = true;
+  const shell = current();
+  if (shell) shell.show();
+  else emptyEl.hidden = terminals.length > 0;
+}
+
+const STEPS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+
+function chooseKey(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    return closeChooser();
+  }
+  const account = /^[1-9]$/.test(event.key) ? accounts[Number(event.key) - 1] : undefined;
+  if (account) {
+    event.preventDefault();
+    return void pick(account);
+  }
+  const step = STEPS[event.key];
+  const buttons = [...choicesEl.querySelectorAll("button")];
+  if (!step || !buttons.length) return;
+  event.preventDefault();
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  buttons[(at + step + buttons.length) % buttons.length]?.focus();
+}
+
 /** A new shell from + belongs to the account of the open tab. */
 function currentAccount(): string | undefined {
   const account = terminals.find((terminal) => terminal.id === currentId)?.account;
@@ -448,6 +515,7 @@ function select(id: string) {
     shells.set(id, shell);
   }
   emptyEl.hidden = true;
+  chooseEl.hidden = true;
   shell.show();
   renderTabs();
   if (changed) tabViews.get(id)?.element.scrollIntoView({ block: "nearest", inline: "nearest" });

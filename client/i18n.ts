@@ -60,6 +60,9 @@ const en = {
   larger: "Larger",
   addAccount: "Sign in to another account",
   openAs: "New terminal as {name}",
+  chooseAccount: "Open a terminal as",
+  chooseByNumber: "Press a number to pick",
+  chooseBack: "Esc to go back",
   signOutOf: "Sign out of {name}",
   signInAgainTo: "Sign in to {name} again",
 };
@@ -123,6 +126,9 @@ const zh: typeof en = {
   larger: "增大",
   addAccount: "登录其他账号",
   openAs: "以 {name} 新建终端",
+  chooseAccount: "用哪个账号新建终端",
+  chooseByNumber: "按数字键选择",
+  chooseBack: "Esc 返回",
   signOutOf: "退出 {name}",
   signInAgainTo: "需要重新登录 {name}",
 };
