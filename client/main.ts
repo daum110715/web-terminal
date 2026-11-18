@@ -26,8 +26,17 @@ interface TerminalInfo {
   id: string;
   title: string;
   name: string;
+  /** The account the shell belongs to. */
+  account: string;
   created: number;
   clients: number;
+}
+
+/** Who this browser is signed in as. */
+interface SessionInfo {
+  username: string;
+  /** Every account it is signed in to, the one from the sign-in page first. */
+  accounts?: string[];
 }
 
 class HttpFailure extends Error {
@@ -54,7 +63,7 @@ let closingId: string | null = null;
 let closingTimer = 0;
 let creating = false;
 const deleting = new Set<string>();
-const tabViews = new Map<string, { element: HTMLElement; label: HTMLButtonElement; close: HTMLButtonElement }>();
+const tabViews = new Map<string, { element: HTMLElement; label: HTMLButtonElement; badge: HTMLElement; text: HTMLElement; close: HTMLButtonElement }>();
 let tabsPending = false;
 /** False until the strip has been drawn once, so the first paint does not animate. */
 let tabsPainted = false;
@@ -63,6 +72,9 @@ let inkAt = "";
 let inkEl: HTMLElement;
 const tabsWatch = new ResizeObserver(() => placeInk(false));
 let panelEvents: AbortController | null = null;
+/** The accounts this browser is signed in to, the one from the sign-in page first. */
+let accounts: string[] = [];
+let paintAccounts = () => {};
 let notice = "";
 let noticeTimer = 0;
 let consoleEl: HTMLElement | null = null;
@@ -140,6 +152,7 @@ function handleError(error: unknown) {
 function showLogin(message = "") {
   panelEvents?.abort();
   panelEvents = null;
+  accounts = [];
   tabViews.clear();
   for (const shell of shells.values()) shell.dispose();
   shells.clear();
@@ -166,13 +179,10 @@ function showLogin(message = "") {
           submit.disabled = true;
           error.textContent = "";
           try {
-            const me = await api<{ username: string }>("session", { method: "POST", body: { username: user.value, password: pass.value } });
-            await showConsole(me.username);
+            const me = await api<SessionInfo>("session", { method: "POST", body: { username: user.value, password: pass.value } });
+            await showConsole(me);
           } catch (failure) {
-            const status = failure instanceof HttpFailure ? failure.status : 0;
-            const text = failure instanceof Error ? failure.message : String(failure);
-            error.textContent =
-              status === 401 ? t("badLogin") : status === 429 ? t("tooMany", { n: /\d+/.exec(text)?.[0] ?? "" }) : status ? text : t("unreachable");
+            error.textContent = loginError(failure);
             pass.value = "";
             pass.focus();
             if (!calm.matches) {
@@ -194,9 +204,48 @@ function showLogin(message = "") {
   user.focus();
 }
 
+/** Why a sign-in did not work, in words for the person. */
+function loginError(failure: unknown): string {
+  const status = failure instanceof HttpFailure ? failure.status : 0;
+  const text = failure instanceof Error ? failure.message : String(failure);
+  return status === 401 ? t("badLogin") : status === 429 ? t("tooMany", { n: /\d+/.exec(text)?.[0] ?? "" }) : status ? text : t("unreachable");
+}
+
 async function signOut() {
   await api("session", { method: "DELETE" }).catch(() => {});
   showLogin(t("signedOut"));
+}
+
+function setAccounts(me: SessionInfo) {
+  accounts = me.accounts?.length ? me.accounts : [me.username];
+  paintAccounts();
+  renderTabs();
+}
+
+/** Signs this browser in to one more account from the settings panel. Resolves to
+    what went wrong, or "" once the account and its shells are here. */
+async function addAccount(username: string, password: string): Promise<string> {
+  try {
+    setAccounts(await api<SessionInfo>("session", { method: "POST", body: { username, password } }));
+  } catch (failure) {
+    return loginError(failure);
+  }
+  void refresh().then(settle).catch(handleError);
+  return "";
+}
+
+/** Signs this browser out of one account. Its shells keep running and come back
+    with the next sign-in to it. */
+async function removeAccount(account: string) {
+  try {
+    const me = await api<SessionInfo>(`session/${encodeURIComponent(account)}`, { method: "DELETE" });
+    if (!me.accounts?.length) return showLogin(t("signedOut"));
+    setAccounts(me);
+    await refresh();
+    settle();
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 // ------------------------------------------------------------ console
@@ -221,9 +270,10 @@ const host: ShellHost = {
   unauthorized: () => showLogin(t("signInAgain")),
 };
 
-async function showConsole(name: string) {
+async function showConsole(me: SessionInfo) {
   panelEvents?.abort();
   panelEvents = new AbortController();
+  accounts = me.accounts?.length ? me.accounts : [me.username];
   tabViews.clear();
   tabsWatch.disconnect();
   tabsPainted = false;
@@ -233,7 +283,7 @@ async function showConsole(name: string) {
   inkEl.hidden = true;
   newButton = h("button", {
     class: "tool", attrs: { type: "button", "aria-label": t("newTerminal"), title: t("newTerminal") },
-    on: { click: () => void create() },
+    on: { click: () => void create(currentAccount()) },
   }, icon("plus"));
   tabsEl.append(inkEl, newButton);
   openButton = h("button", { class: "primary", text: t("openShell"), attrs: { type: "button" }, on: { click: () => void create() } });
@@ -257,7 +307,22 @@ async function showConsole(name: string) {
     panel.close();
     current()?.focus();
   };
-  const panel = buildPanel(name, { close, signOut: () => void signOut() }, panelEvents.signal);
+  const built = buildPanel(
+    {
+      accounts: () => accounts,
+      open: (account) => {
+        close();
+        void create(account);
+      },
+      add: addAccount,
+      remove: (account) => void removeAccount(account),
+      signOut: () => void signOut(),
+      close,
+    },
+    panelEvents.signal,
+  );
+  const panel = built.panel;
+  paintAccounts = built.paintAccounts;
   panel.addEventListener("cancel", (event) => {
     event.preventDefault();
     close();
@@ -336,6 +401,12 @@ function current(): Shell | undefined {
   return currentId ? shells.get(currentId) : undefined;
 }
 
+/** A new shell from + belongs to the account of the open tab. */
+function currentAccount(): string | undefined {
+  const account = terminals.find((terminal) => terminal.id === currentId)?.account;
+  return account && accounts.includes(account) ? account : undefined;
+}
+
 async function refresh() {
   terminals = await api<TerminalInfo[]>("terminals");
   for (const [id, shell] of shells) {
@@ -377,7 +448,7 @@ function select(id: string) {
   paintStatus();
 }
 
-async function create() {
+async function create(account?: string) {
   if (creating) return;
   creating = true;
   newButton.disabled = true;
@@ -386,12 +457,16 @@ async function create() {
     const size = current()?.term;
     const made = await api<TerminalInfo>("terminals", {
       method: "POST",
-      body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }) },
+      body: { dark: activeTheme().dark, ...(size && { cols: size.cols, rows: size.rows }), ...(account && { account }) },
     });
     await refresh();
     select(made.id);
   } catch (error) {
-    handleError(error);
+    // The account dropped out of this browser, for one when its password changed.
+    if (error instanceof HttpFailure && error.status === 403) {
+      flash(t("signInAgainTo", { name: account ?? "" }));
+      void api<SessionInfo>("session").then(setAccounts, handleError);
+    } else handleError(error);
   } finally {
     creating = false;
     newButton.disabled = false;
@@ -501,6 +576,8 @@ function renderTabs() {
       let view = tabViews.get(terminal.id);
       if (!view) {
         const id = terminal.id;
+        const badge = h("span", { class: "tab-account" });
+        const text = h("span", {});
         const label = h("button", {
           class: "tab-label",
           attrs: { type: "button", role: "tab", title: t("renameHint") },
@@ -511,17 +588,21 @@ function renderTabs() {
               if (info) startRename(info, label);
             },
           },
-        });
+        }, badge, text);
         const close = h("button", {
           class: "tab-close", attrs: { type: "button" },
           on: { click: () => void end(id) },
         }, icon("close"), h("span", { class: "tab-ask" }, h("span", { text: t("confirmClose") })));
-        view = { element: h("div", { class: "tab", attrs: { "data-terminal": id } }, label, close), label, close };
+        view = { element: h("div", { class: "tab", attrs: { "data-terminal": id } }, label, close), label, badge, text, close };
         tabViews.set(id, view);
         tabsWatch.observe(view.element);
       }
       view.element.className = `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}${deleting.has(terminal.id) ? " going" : ""}`;
-      if (view.label.textContent !== shown(terminal)) view.label.textContent = shown(terminal);
+      // With more than one account here, shells of the others wear their account's name.
+      const marked = accounts.length > 1 && terminal.account !== accounts[0];
+      view.badge.hidden = !marked;
+      if (marked && view.badge.textContent !== terminal.account) view.badge.textContent = terminal.account;
+      if (view.text.textContent !== shown(terminal)) view.text.textContent = shown(terminal);
       view.label.setAttribute("aria-selected", String(on));
       view.close.setAttribute("aria-label", `${t("closeTerminal")} ${shown(terminal)}`);
       view.close.disabled = deleting.has(terminal.id);
@@ -585,8 +666,7 @@ async function boot() {
   // Later theme changes blend; the first paint must not fade in from the defaults.
   requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("live")));
   try {
-    const me = await api<{ username: string }>("session");
-    await showConsole(me.username);
+    await showConsole(await api<SessionInfo>("session"));
   } catch (error) {
     if (error instanceof HttpFailure && error.status === 401) return showLogin();
     app.replaceChildren(

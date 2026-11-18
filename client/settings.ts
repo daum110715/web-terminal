@@ -212,7 +212,109 @@ function themeTile(theme: Theme, selected: boolean, choose: () => void, remove?:
   );
 }
 
-export function buildPanel(account: string, actions: { close: () => void; signOut: () => void }, signal: AbortSignal): HTMLDialogElement {
+/** What the panel's account area needs from the page. */
+export interface AccountActions {
+  /** The accounts this browser is signed in to, the one from the sign-in page first. */
+  accounts: () => readonly string[];
+  /** Opens a new terminal as this account. */
+  open: (account: string) => void;
+  /** Signs in to one more account; resolves to what went wrong, or "" when it worked. */
+  add: (username: string, password: string) => Promise<string>;
+  remove: (account: string) => void;
+  signOut: () => void;
+  close: () => void;
+}
+
+/** One signed-in account: its name opens a terminal as it, the cross signs this browser out of it. */
+function accountChip(name: string, actions: AccountActions): HTMLElement {
+  return h(
+    "div",
+    { class: "chip" },
+    h("button", {
+      class: "chip-open",
+      text: name,
+      attrs: { type: "button", title: t("openAs", { name }) },
+      on: { click: () => actions.open(name) },
+    }),
+    h("button", {
+      class: "chip-remove",
+      text: "×",
+      attrs: { type: "button", "aria-label": t("signOutOf", { name }), title: t("signOutOf", { name }) },
+      on: { click: () => actions.remove(name) },
+    }),
+  );
+}
+
+/** Who is signed in, a chip per account once there is more than one, and a
+    folded form that signs in to one more with its own password, once. */
+function accountArea(actions: AccountActions): { element: HTMLElement; paint: () => void } {
+  const label = h("span", { class: "row-label" });
+  const head = h("h3", { text: t("newTerminal") });
+  const chips = h("div", { class: "chips" });
+  const views = new Map<string, HTMLElement>();
+  const paint = () => {
+    const accounts = actions.accounts();
+    label.textContent = t("account", { name: accounts[0] ?? "" });
+    for (const name of views.keys()) if (!accounts.includes(name)) views.delete(name);
+    for (const name of accounts) if (!views.has(name)) views.set(name, accountChip(name, actions));
+    head.hidden = chips.hidden = accounts.length < 2;
+    reconcile(chips, accounts.length < 2 ? [] : accounts.map((name) => views.get(name)!));
+  };
+
+  const user = h("input", {
+    attrs: { name: "username", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: "", maxlength: "200", placeholder: t("username"), "aria-label": t("username") },
+  });
+  const pass = h("input", {
+    attrs: { name: "password", type: "password", autocomplete: "current-password", required: "", maxlength: "1000", placeholder: t("password"), "aria-label": t("password") },
+  });
+  const note = h("p", { class: "note", attrs: { role: "alert" } });
+  const submit = h("button", { class: "plain", text: t("signIn"), attrs: { type: "submit" } });
+  const adder = h(
+    "details",
+    { class: "import" },
+    h("summary", { text: t("addAccount") }),
+    h(
+      "form",
+      {
+        class: "fields",
+        on: {
+          submit: async (event) => {
+            event.preventDefault();
+            submit.disabled = true;
+            note.textContent = "";
+            const problem = await actions.add(user.value, pass.value);
+            submit.disabled = false;
+            pass.value = "";
+            if (problem) {
+              note.textContent = problem;
+              pass.focus();
+              return;
+            }
+            user.value = "";
+            adder.open = false;
+          },
+        },
+      },
+      user,
+      pass,
+      submit,
+      note,
+    ),
+  );
+
+  paint();
+  const element = h(
+    "section",
+    { class: "account" },
+    h("div", { class: "row" }, label, h("button", { class: "plain", text: t("signOut"), attrs: { type: "button" }, on: { click: actions.signOut } })),
+    head,
+    chips,
+    adder,
+  );
+  return { element, paint };
+}
+
+export function buildPanel(actions: AccountActions, signal: AbortSignal): { panel: HTMLDialogElement; paintAccounts: () => void } {
   const lightTiles = h("div", { class: "tiles" });
   const darkTiles = h("div", { class: "tiles" });
   const themeArea = h("div", { class: "themes" },
@@ -316,7 +418,8 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
   );
   languageSelect.value = ((recall(LANGUAGE_KEY) as Language | null) ?? "auto") satisfies string;
 
-  return h(
+  const account = accountArea(actions);
+  const panel = h(
     "dialog",
     { class: "panel", attrs: { "aria-label": t("settings") } },
     h(
@@ -387,11 +490,7 @@ export function buildPanel(account: string, actions: { close: () => void; signOu
       ),
       row(t("language"), languageSelect),
     ),
-    h(
-      "section",
-      { class: "account" },
-      h("span", { class: "row-label", text: t("account", { name: account }) }),
-      h("button", { class: "plain", text: t("signOut"), attrs: { type: "button" }, on: { click: actions.signOut } }),
-    ),
+    account.element,
   );
+  return { panel, paintAccounts: account.paint };
 }

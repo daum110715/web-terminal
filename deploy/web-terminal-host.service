@@ -1,0 +1,23 @@
+[Unit]
+Description=Web terminal shell host (keeps the shells while the web side restarts)
+After=network.target
+
+[Service]
+Type=simple
+# Clone the repo to ~/web-terminal, or change this path.
+WorkingDirectory=%h/web-terminal
+# Use the absolute path of your Node 24+ binary; systemd's PATH is minimal.
+ExecStart=/usr/bin/node server/host.ts
+# Shells inherit this; without a UTF-8 locale they fall back to C.UTF-8.
+Environment=LANG=en_US.UTF-8
+# Restarting this ends every shell. It exits cleanly when another host already
+# owns the socket, so only a failure brings it back.
+Restart=on-failure
+RestartSec=2
+UMask=0077
+# When the kernel kills one runaway program in a shell for memory, keep the
+# host and every other shell running. The default stops the whole service.
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

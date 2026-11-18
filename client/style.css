@@ -386,6 +386,19 @@ select {
   white-space: nowrap;
 }
 
+/* With more than one account signed in, shells of the others carry its name. */
+.tab-account {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 18px;
+  vertical-align: 1px;
+}
+
 /* Renaming happens in place: the label's own spot, marked only by an accent
    underline. Two classes, so the general field look above does not apply. */
 .tab .tab-rename,
@@ -781,7 +794,8 @@ select {
   justify-self: stretch;
 }
 
-.themes h3 {
+.themes h3,
+.account h3 {
   margin-top: 6px;
   font-size: 12px;
   font-weight: 500;
@@ -1098,15 +1112,67 @@ select {
   transform: translateX(11px);
 }
 
+/* Who is signed in, a chip per account that opens a terminal as it, and a
+   folded form that signs in to one more. */
 .panel .account {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-top: 10px;
   padding: 14px 20px 16px;
   border-top: 1px solid var(--line);
   color: var(--dim);
   font-size: 13px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* One soft well: the name opens a terminal, the quiet cross at its end signs out. */
+.chip {
+  display: inline-flex;
+  border-radius: 8px;
+  background: var(--field);
+  transition: background-color 0.12s ease;
+}
+
+.chip:hover {
+  background: color-mix(in srgb, var(--fg) 11%, var(--bg));
+}
+
+.chip-open,
+.chip-remove {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.chip-open {
+  padding: 6px 4px 6px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.chip-open:active {
+  transform: scale(0.96);
+}
+
+.chip-remove {
+  padding: 0 10px 0 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--dim);
+}
+
+.chip-remove:hover {
+  color: var(--fg);
+}
+
+.fields {
+  display: grid;
+  gap: 8px;
 }
 
 /* Phones: the strip stays one row, close buttons are always there to tap, and

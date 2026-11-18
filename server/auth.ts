@@ -1,6 +1,8 @@
 // Multi-account authentication with stateless signed session cookies.
-// Each cookie is signed with a key derived from that account's password hash,
+// Each token is signed with a key derived from its account's password hash,
 // so changing one user's password only signs out that user's sessions.
+// One browser can be signed in to several accounts: the cookie carries one
+// token per account, and each token is checked on its own.
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +19,10 @@ const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 2 ** 20 };
 export const COOKIE = "wt_session";
 const MAX_AGE = 90 * 86400;
 const RENEW_BELOW = 60 * 86400;
+/** How many accounts one browser can be signed in to at once. */
+export const MAX_ACCOUNTS = 8;
+// Tokens are base64url and dots, so this never occurs inside one.
+const SEPARATOR = "~";
 // Used to equalize timing when a login names an unknown user.
 const DUMMY_HASH = "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -29,8 +35,21 @@ export interface Account {
 export interface SessionIdentity {
   username: string;
   systemUser?: string;
-  renewed?: string;
 }
+
+/** The accounts a cookie signs in to, in the order they were added. */
+export interface Session {
+  accounts: SessionIdentity[];
+  /** One valid token per account, renewed where due, in the same order. */
+  tokens: string[];
+  /** True when the cookie no longer matches `tokens` and should be sent again. */
+  changed: boolean;
+}
+
+const identity = (account: Account): SessionIdentity => ({
+  username: account.username,
+  ...(account.systemUser ? { systemUser: account.systemUser } : {}),
+});
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
@@ -94,7 +113,7 @@ export class Auth {
   }
 
   listAccounts(): Array<{ username: string; systemUser?: string }> {
-    return this.accounts().map(({ username, systemUser }) => ({ username, ...(systemUser ? { systemUser } : {}) }));
+    return this.accounts().map(identity);
   }
 
   async setAccount(username: string, password: string, systemUser?: string) {
@@ -138,32 +157,52 @@ export class Auth {
     return `${payload}.${signature}`;
   }
 
-  /** Returns the identity, plus a fresh token when the session should roll forward. */
-  verify(token: string | undefined, now = Date.now()): SessionIdentity | null {
-    if (!token) return null;
+  /**
+   * Checks every token in a cookie and keeps the valid ones, one per account.
+   * A token that expired or whose account changed its password drops out
+   * without signing the browser out of the others.
+   */
+  verify(value: string | undefined, now = Date.now()): Session | null {
+    if (!value) return null;
+    const pieces = value.split(SEPARATOR);
+    const session: Session = { accounts: [], tokens: [], changed: pieces.length > MAX_ACCOUNTS };
+    for (const token of pieces.slice(0, MAX_ACCOUNTS)) {
+      const checked = this.check(token, now);
+      if (!checked || session.accounts.some((entry) => entry.username === checked.account.username)) {
+        session.changed = true;
+        continue;
+      }
+      session.accounts.push(identity(checked.account));
+      session.tokens.push(checked.renewed ?? token);
+      if (checked.renewed) session.changed = true;
+    }
+    return session.accounts.length ? session : null;
+  }
+
+  /** One token: its account, plus a fresh token when it should roll forward. */
+  private check(token: string, now: number): { account: Account; renewed?: string } | null {
     const split = token.lastIndexOf(".");
     if (split < 0) return null;
     const payload = token.slice(0, split);
     const parts = payload.split(".");
     if (parts.length !== 3 || !parts[0]) return null;
-    const username = Buffer.from(parts[0], "base64url").toString("utf8");
-    const account = this.findAccount(username);
+    const account = this.findAccount(Buffer.from(parts[0], "base64url").toString("utf8"));
     if (!account) return null;
     const expected = createHmac("sha256", this.signingKey(account)).update(payload).digest();
     const supplied = Buffer.from(token.slice(split + 1), "base64url");
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
     const left = Number(parts[1]) - Math.floor(now / 1000);
     if (!(left > 0)) return null;
-    return {
-      username: account.username,
-      ...(account.systemUser ? { systemUser: account.systemUser } : {}),
-      ...(left < RENEW_BELOW && { renewed: this.issue(account, now) }),
-    };
+    return { account, ...(left < RENEW_BELOW && { renewed: this.issue(account, now) }) };
   }
 
-  static cookie(token: string | null, path = "/"): string {
-    const value = token ?? "";
-    const age = token ? MAX_AGE : 0;
+  static join(tokens: readonly string[]): string {
+    return tokens.join(SEPARATOR);
+  }
+
+  static cookie(tokens: readonly string[], path = "/"): string {
+    const value = Auth.join(tokens);
+    const age = value ? MAX_AGE : 0;
     return `${COOKIE}=${value}; Path=${path}; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
   }
 

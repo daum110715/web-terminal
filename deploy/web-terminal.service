@@ -1,6 +1,8 @@
 [Unit]
 Description=Web terminal (127.0.0.1 only; put a TLS reverse proxy in front)
-After=network.target
+# The shells live in the host; restarting this unit leaves them running.
+Wants=web-terminal-host.service
+After=network.target web-terminal-host.service
 
 [Service]
 Type=simple
@@ -16,6 +18,9 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2
 UMask=0077
+# When the kernel kills one runaway program in a shell for memory, keep the
+# service and every other shell running. The default stops the whole service.
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target

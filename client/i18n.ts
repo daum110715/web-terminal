@@ -58,6 +58,10 @@ const en = {
   clipboardDenied: "The browser blocked clipboard access",
   smaller: "Smaller",
   larger: "Larger",
+  addAccount: "Sign in to another account",
+  openAs: "New terminal as {name}",
+  signOutOf: "Sign out of {name}",
+  signInAgainTo: "Sign in to {name} again",
 };
 
 const zh: typeof en = {
@@ -117,6 +121,10 @@ const zh: typeof en = {
   clipboardDenied: "浏览器没有允许读取剪贴板",
   smaller: "减小",
   larger: "增大",
+  addAccount: "登录其他账号",
+  openAs: "以 {name} 新建终端",
+  signOutOf: "退出 {name}",
+  signInAgainTo: "需要重新登录 {name}",
 };
 
 export type Language = "auto" | "zh" | "en";

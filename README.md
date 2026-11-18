@@ -49,7 +49,7 @@ It is a single small Node server, a plain TypeScript client on
 ```sh
 npm ci
 npm run build          # bundles the client into client/dist
-npm run passwd         # sets the one account (interactive)
+npm run passwd         # adds or updates an account (interactive)
 npm start              # listens on http://127.0.0.1:3120
 ```
 
@@ -64,12 +64,21 @@ on loopback, so it is never reachable directly from the network.
 
 ## Deploying
 
-- `deploy/web-terminal.service` is a systemd user unit. Copy it to
-  `~/.config/systemd/user/`, fix the Node path, then
-  `systemctl --user enable --now web-terminal`.
-- After `npm run build`, `systemctl --user reload web-terminal` serves the new
-  client without ending open shells. Restarting the service ends them, so run
-  anything long-lived inside tmux.
+- The shells live in their own process, the shell host, and the web server
+  (sign-in, API, client) talks to it over a private Unix socket in the data
+  directory. `deploy/web-terminal-host.service` and `deploy/web-terminal.service`
+  are the two systemd user units. Copy both to `~/.config/systemd/user/`, fix
+  the Node path, then `systemctl --user enable --now web-terminal-host web-terminal`.
+  If you set `WEB_TERMINAL_DATA` or `WEB_TERMINAL_MAX`, set them in both.
+- Restarting `web-terminal` never ends a shell: browsers reconnect and get the
+  screen back. After `npm run build`, `systemctl --user reload web-terminal`
+  serves the new client without even that. Only restarting the host ends the
+  shells, and an update needs that only when `server/terminal.ts` or
+  `server/host.ts` changed.
+- Without the host unit (or with plain `npm start`), the web server starts a
+  host itself, and the shells end whenever the web server does.
+- Keep `OOMPolicy=continue` from the example units: without it, one program
+  killed for memory stops the service and every shell with it.
 - `deploy/Caddyfile.example` shows the proxy block. Caddy obtains the
   certificate and sets `X-Forwarded-For`.
 
@@ -89,8 +98,13 @@ Shells start as login shells of `$SHELL` in the home directory, with
 - A shell here runs as the account that starts the server, with that account's
   permissions. If that account can use `sudo` without a password, anyone who
   signs in can too. Run it as an unprivileged user.
-- One account, scrypt-hashed password, and an HMAC-signed `Secure` session
-  cookie that lasts 90 days. Changing the password signs out every session.
+- Accounts with scrypt-hashed passwords, and an HMAC-signed `Secure` session
+  cookie that lasts 90 days. A browser can be signed in to several accounts at
+  once (Settings, Sign in to another account); each terminal belongs to one of
+  them. Changing an account's password signs that account out everywhere.
+- An account can be tied to a system user (`npm run passwd` asks). Its shells
+  then start as that user through `sudo -n`, so the service account needs
+  passwordless sudo for it.
 - Login is throttled per client address, with lockouts that double after five
   failures. The address is the last `X-Forwarded-For` hop when the peer is
   loopback, so only run it behind a proxy you control.

@@ -18,6 +18,8 @@ export interface TerminalInfo {
   title: string;
   /** The name the user gave it, or "" when it has none. */
   name: string;
+  /** The account the shell belongs to. */
+  account: string;
   created: number;
   clients: number;
 }
@@ -73,6 +75,8 @@ const EXTRA_MODES = new Map<number, boolean>([
 
 const clampCols = (cols: number) => Math.max(10, Math.min(500, Math.floor(cols)));
 const clampRows = (rows: number) => Math.max(4, Math.min(200, Math.floor(rows)));
+// Who owns a shell when the caller does not say; only the tests leave it out.
+const DEFAULT_OWNER = "default";
 
 interface Session {
   id: string;
@@ -171,26 +175,28 @@ export class Terminals {
       id: session.id,
       title: session.name || session.title || session.fallbackTitle || session.process.process,
       name: session.name,
+      account: session.owner,
       created: session.created,
       clients: session.clients.size,
     };
   }
 
-  private ownedSessions(owner: string): Session[] {
-    return [...this.sessions.values()].filter((session) => session.owner === owner);
+  /** Shells that belong to any of these accounts, oldest first. */
+  private owned(owners: readonly string[]): Session[] {
+    return [...this.sessions.values()].filter((session) => owners.includes(session.owner));
   }
 
-  private ownSession(id: string, owner: string): Session | undefined {
+  private find(id: string, owners: readonly string[]): Session | undefined {
     const session = this.sessions.get(id);
-    return session && session.owner === owner ? session : undefined;
+    return session && owners.includes(session.owner) ? session : undefined;
   }
 
-  list(owner = "default"): TerminalInfo[] {
-    return this.ownedSessions(owner).map((session) => this.info(session));
+  list(owners: readonly string[] = [DEFAULT_OWNER]): TerminalInfo[] {
+    return this.owned(owners).map((session) => this.info(session));
   }
 
-  create(options: TerminalOptions = {}, owner = "default"): TerminalInfo {
-    if (this.ownedSessions(owner).length >= this.max) throw new HttpError(409, `At most ${this.max} terminals can run at once`);
+  create(options: TerminalOptions = {}, owner = DEFAULT_OWNER): TerminalInfo {
+    if (this.owned([owner]).length >= this.max) throw new HttpError(409, `At most ${this.max} terminals can run at once`);
     const cols = clampCols(options.cols ?? 100);
     const rows = clampRows(options.rows ?? 30);
     const { child, fallbackTitle } = spawnShell(cols, rows, options);
@@ -282,16 +288,16 @@ export class Terminals {
     for (const client of session.clients) client.send(message);
   }
 
-  rename(id: string, name: string, owner = "default"): TerminalInfo {
-    const session = this.ownSession(id, owner);
+  rename(id: string, name: string, owners: readonly string[] = [DEFAULT_OWNER]): TerminalInfo {
+    const session = this.find(id, owners);
     if (!session) throw new HttpError(404, "Terminal not found");
     session.name = name.trim().slice(0, 40);
     this.announce(session);
     return this.info(session);
   }
 
-  kill(id: string, owner = "default") {
-    const session = this.ownSession(id, owner);
+  kill(id: string, owners: readonly string[] = [DEFAULT_OWNER]) {
+    const session = this.find(id, owners);
     if (!session) throw new HttpError(404, "Terminal not found");
     // Gone from the list at once, not when the process gets around to exiting.
     this.retire(session);
@@ -309,8 +315,8 @@ export class Terminals {
    * control messages. Server to client: one JSON "snapshot" first, then
    * binary frames of live output, with JSON "title" messages in between.
    */
-  attach(id: string, socket: WebSocket, owner = "default") {
-    const session = this.ownSession(id, owner);
+  attach(id: string, socket: WebSocket, owners: readonly string[] = [DEFAULT_OWNER]) {
+    const session = this.find(id, owners);
     if (!session) {
       socket.close(4004, "Terminal not found");
       return;

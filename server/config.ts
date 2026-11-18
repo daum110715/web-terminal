@@ -10,6 +10,8 @@ export const config = {
   port: Number(process.env.WEB_TERMINAL_PORT ?? 3120),
   paths: {
     secrets: path.join(data, "secrets"),
+    // The shell host listens here; only this account can open it (var/ is 0700).
+    socket: path.join(data, "host.sock"),
     dist: path.join(root, "client", "dist"),
   },
   limits: {
