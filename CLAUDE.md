@@ -16,7 +16,8 @@ Node 直接跑 `.ts`（类型擦除），服务端代码只能用可擦除的语
 - `server/host.ts` shell 宿主，单独的进程和 systemd 单元（`web-terminal-host`），持有全部 shell。网页服务经数据目录里的 Unix 套接字（`var/host.sock`）调它：HTTP 管列表、新建、改名、关闭，每个浏览器连接对应一条到宿主的 WebSocket，`server/host-client.ts` 原样转发帧。网页服务重启不会结束 shell，浏览器重连后拿到新快照。
 - `server/terminal.ts` shell 会话，跑在宿主里。每个会话有一份无头 xterm 镜像，浏览器接入时发一帧 JSON 快照（屏幕、回滚、光标、模式），之后才是二进制实时输出。不要退回成原始字节回放：那会从转义序列中间开始、丢掉备用屏和鼠标模式，还会让旧的查询序列被重复应答。
 - `server/app.ts` 登录、终端列表、静态资源。`server/auth.ts` scrypt 密码和签名 cookie。
-- `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。标签切到后台时不销毁，也不参与尺寸计算。
+- `client/shell.ts` 一个标签页：xterm、WebGL 渲染、键盘处理、重连。页面打开时所有标签都连上（后台标签才能报状态），切到后台时不销毁，也不参与尺寸计算。
+- `client/activity.ts` 后台标签的状态：运行中（转圈）、完成（强调色点）、等你确认（会呼吸的红点）。依据是 OSC 9;4 进度、通知（OSC 9/777/99、响铃）和输出节奏：持续输出算运行，停下 3 秒算结束，单次重绘（tmux 时钟）不算；结束后看屏幕末尾有没有各家 agent 的确认提示，来区分完成和等你。只在客户端做，不碰宿主。
 - `client/ime.ts` 输入法、语音输入、手机键盘这类经 textarea 进来的文字。xterm 自带的几条路径（组字结束、insertText、keydown 229 后的差分）在部分输入法下会把同一段话各发一次，所以全部拦下，只按 textarea 相对上次发送的增删发一次。例外是空格、大写字母、死键：xterm 在 keypress 里已经发出，浏览器随后写进 textarea 的同一个字只记下不再发；不要改成拦下 keypress 交给 textarea 发。组字预览也在这里，会换行。
 - `client/touch-scroll.ts` 单指拖动和惯性滚动。普通 shell 滚动本地历史，全屏程序沿用 xterm 的滚轮处理，保留鼠标编码和方向键模式。
 - `client/themes.ts` 主题。调色板必须如实：黑是深色、白是浅色，浅色主题也一样。可读性靠 `minimumContrastRatio`，不靠把颜色对调。

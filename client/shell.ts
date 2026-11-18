@@ -6,6 +6,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
+import { type Activity, ActivityWatch } from "./activity.ts";
 import { h } from "./dom.ts";
 import { TextInput } from "./ime.ts";
 import { activeTheme, contrastRatio, fontFamily, primaryFont, settings } from "./settings.ts";
@@ -19,8 +20,8 @@ export interface ShellHost {
   transform(data: string, applicationCursorKeys?: boolean): string;
   status(shell: Shell): void;
   title(shell: Shell, title: string): void;
-  /** Output arrived while the tab was in the background. */
-  activity(shell: Shell): void;
+  /** What the program in a background tab is doing changed. */
+  activity(shell: Shell, state: Activity): void;
   /** The shell exited or no longer exists on the server. */
   gone(shell: Shell): void;
   /** The server refused the session cookie. */
@@ -91,6 +92,7 @@ export class Shell {
   private readonly fit = new FitAddon();
   private readonly observer: ResizeObserver;
   private readonly touchScroll: TouchScroll;
+  private readonly activity: ActivityWatch;
   private webgl: WebglAddon | null = null;
   private socket: WebSocket | null = null;
   private attempts = 0;
@@ -140,6 +142,7 @@ export class Shell {
     term.unicode.activeVersion = "11";
     term.open(this.mount);
     this.touchScroll = new TouchScroll(term);
+    this.activity = new ActivityWatch(term, (state) => host.activity(this, state));
     this.startWebgl();
 
     let keyboardData: string | null = null;
@@ -258,6 +261,7 @@ export class Shell {
 
   show() {
     this.visible = true;
+    this.activity.shown(true);
     this.mount.hidden = false;
     this.fitAndSend();
     this.term.focus();
@@ -266,6 +270,7 @@ export class Shell {
   hide() {
     this.touchScroll.stop();
     this.visible = false;
+    this.activity.shown(false);
     this.mount.hidden = true;
   }
 
@@ -323,7 +328,7 @@ export class Shell {
       const bytes = new Uint8Array(event.data as ArrayBuffer);
       watchForIcons(bytes);
       this.term.write(bytes);
-      if (!this.visible) this.host.activity(this);
+      this.activity.output();
     };
     socket.onclose = (event) => {
       if (this.closed || socket !== this.socket) return;
@@ -352,6 +357,7 @@ export class Shell {
     this.term.write(message.data, () => {
       this.setStatus("connected");
       this.fitAndSend();
+      this.activity.restored();
     });
   }
 
@@ -376,6 +382,7 @@ export class Shell {
     this.closed = true;
     shells.delete(this);
     window.clearTimeout(this.timer);
+    this.activity.dispose();
     this.observer.disconnect();
     this.touchScroll.dispose();
     this.socket?.close(1000);

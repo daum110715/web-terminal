@@ -16,6 +16,7 @@ import "@fontsource/ibm-plex-mono/700-italic.css";
 import "@xterm/xterm/css/xterm.css";
 import "./fonts.css";
 import "./style.css";
+import type { Activity } from "./activity.ts";
 import { afterPointer, h, icon, recall, reconcile, remember } from "./dom.ts";
 import { language, t } from "./i18n.ts";
 import { applyModifiers, buildKeyBar } from "./keys.ts";
@@ -56,7 +57,8 @@ const GLIDE: KeyframeAnimationOptions = { duration: 220, easing: "cubic-bezier(0
 
 let terminals: TerminalInfo[] = [];
 const shells = new Map<string, Shell>();
-const unread = new Set<string>();
+/** What each background tab's program is doing; tabs that are idle are left out. */
+const marks = new Map<string, Activity>();
 let currentId: string | null = null;
 /** The tab whose close button is waiting for its second click. */
 let closingId: string | null = null;
@@ -156,7 +158,7 @@ function showLogin(message = "") {
   tabViews.clear();
   for (const shell of shells.values()) shell.dispose();
   shells.clear();
-  unread.clear();
+  marks.clear();
   consoleEl = null;
   currentId = null;
   terminals = [];
@@ -261,9 +263,10 @@ const host: ShellHost = {
     info.title = title;
     renderTabs();
   },
-  activity: (shell) => {
-    if (unread.has(shell.id)) return;
-    unread.add(shell.id);
+  activity: (shell, state) => {
+    if ((marks.get(shell.id) ?? "idle") === state) return;
+    if (state === "idle") marks.delete(shell.id);
+    else marks.set(shell.id, state);
     renderTabs();
   },
   gone: () => void refresh().then(settle).catch(handleError),
@@ -413,8 +416,11 @@ async function refresh() {
     if (terminals.some((terminal) => terminal.id === id)) continue;
     shell.dispose();
     shells.delete(id);
-    unread.delete(id);
+    marks.delete(id);
   }
+  // Every tab stays connected, so one in the background can say when its program finishes.
+  for (const terminal of terminals)
+    if (!shells.has(terminal.id)) shells.set(terminal.id, new Shell(terminal.id, stageEl, host));
   if (currentId && !terminals.some((terminal) => terminal.id === currentId)) currentId = null;
   renderTabs();
 }
@@ -434,7 +440,7 @@ function select(id: string) {
   const changed = currentId !== id;
   if (currentId !== id) current()?.hide();
   currentId = id;
-  unread.delete(id);
+  marks.delete(id);
   remember(LAST, id);
   let shell = shells.get(id);
   if (!shell) {
@@ -597,7 +603,7 @@ function renderTabs() {
         tabViews.set(id, view);
         tabsWatch.observe(view.element);
       }
-      view.element.className = `tab${on ? " on" : ""}${unread.has(terminal.id) && !on ? " unread" : ""}${deleting.has(terminal.id) ? " going" : ""}`;
+      view.element.className = `tab${on ? " on" : ""}${!on && marks.has(terminal.id) ? ` ${marks.get(terminal.id)}` : ""}${deleting.has(terminal.id) ? " going" : ""}`;
       // With more than one account here, shells of the others wear their account's name.
       const marked = accounts.length > 1 && terminal.account !== accounts[0];
       view.badge.hidden = !marked;

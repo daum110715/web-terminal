@@ -412,16 +412,49 @@ select {
   background: linear-gradient(var(--accent), var(--accent)) 14px calc(100% - 6px) / calc(100% - 16px) 2px no-repeat;
 }
 
-.tab.unread .tab-label::before {
+/* What a background tab's program is doing: a turning ring while it works, a
+   dot when it is done, a dot that breathes while it waits for you. */
+.tab:is(.running, .done, .waiting) .tab-label::before {
   content: "";
   display: inline-block;
+  box-sizing: border-box;
   width: 6px;
   height: 6px;
   margin-right: 7px;
   border-radius: 50%;
-  background: var(--accent);
   vertical-align: 1px;
+}
+
+.tab.running .tab-label::before {
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  vertical-align: 0;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-top-color: var(--dim);
+  animation: turn 0.9s linear infinite;
+}
+
+.tab.done .tab-label::before {
+  background: var(--accent);
   animation: pop 0.32s var(--ease);
+}
+
+.tab.waiting .tab-label::before {
+  background: var(--bad);
+  animation: pop 0.32s var(--ease), breathe 1.8s ease-in-out 0.32s infinite;
+}
+
+@keyframes turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes breathe {
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 28%, transparent);
+  }
 }
 
 @keyframes pop {
